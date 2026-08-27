@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import useStore from '../store';
 import { useReactToPrint } from 'react-to-print';
 import TransactionPrintTemplate from './TransactionPrintTemplate';
-import { Printer, Trash2, Plus, Save, GripVertical, Link2, Unlink } from 'lucide-react';
+import { Printer, Trash2, Plus, Save, Link2, Unlink } from 'lucide-react';
 import {
   isFileSystemAccessSupported,
   getConnectedHandle,
@@ -10,6 +10,9 @@ import {
   disconnectBackupFile,
   writeTransactionsBackup,
 } from '../lib/transactionExcelSync';
+import { applyItemChange, createEmptyItem } from '../lib/transactionItems';
+import { findReceiverInfo } from '../lib/companyLookup';
+import TransactionItemsTable from './TransactionItemsTable';
 
 function History() {
   const {
@@ -75,38 +78,28 @@ function History() {
     documentTitle: selectedTx ? `거래명세서_${selectedTx.companyName}_${selectedTx.year}년${selectedTx.month}월` : '명세서',
   });
 
-  const getReceiverInfo = (companyName) => {
-    return companies.find(c => c.name === companyName) || {
-      regNo: '', name: companyName, president: '', address: '', businessType: '', businessItem: ''
-    };
+  const getReceiverInfo = (companyName) => findReceiverInfo(companies, companyName);
+
+  const setItems = (items) => {
+    if (!selectedTx) return;
+    setSelectedTx({ ...selectedTx, items });
   };
 
-  // Editing logic
   const handleItemChange = (index, field, value) => {
     if (!selectedTx) return;
-    const newItems = [...selectedTx.items];
-    newItems[index] = { ...newItems[index], [field]: value };
-
-    if (field === 'price' || field === 'qty') {
-      const q = Number(newItems[index].qty) || 0;
-      const p = Number(newItems[index].price) || 0;
-      newItems[index].supply = q * p;
-      newItems[index].tax = Math.floor(newItems[index].supply * 0.1);
-    }
-    setSelectedTx({ ...selectedTx, items: newItems });
+    setItems(applyItemChange(selectedTx.items, index, field, value));
   };
 
   const addItem = () => {
     if (!selectedTx) return;
-    const newItems = [...selectedTx.items, { date: '', name: '', spec: '', unit: 'EA', qty: 0, price: 0, supply: 0, tax: 0, note: '' }];
-    setSelectedTx({ ...selectedTx, items: newItems });
+    setItems([...selectedTx.items, createEmptyItem()]);
   };
 
   const deleteItem = (index) => {
     if (!selectedTx) return;
     const newItems = [...selectedTx.items];
     newItems.splice(index, 1);
-    setSelectedTx({ ...selectedTx, items: newItems });
+    setItems(newItems);
   };
 
   const handleSave = () => {
@@ -114,33 +107,6 @@ function History() {
     saveTransaction(selectedTx);
     backupNow();
     alert('수정된 내용이 안전하게 저장되었습니다!');
-  };
-
-  // Drag logic
-  const [draggedItemIndex, setDraggedItemIndex] = useState(null);
-  const [activeDragHandleIndex, setActiveDragHandleIndex] = useState(null);
-
-  const handleDragStart = (e, index) => {
-    setDraggedItemIndex(index);
-    e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("text/plain", index);
-  };
-
-  const handleDragOver = (e) => {
-    e.preventDefault();
-  };
-
-  const handleDrop = (e, targetIndex) => {
-    e.preventDefault();
-    if (!selectedTx || draggedItemIndex === null || draggedItemIndex === targetIndex) return;
-    
-    const newItems = [...selectedTx.items];
-    const [draggedItem] = newItems.splice(draggedItemIndex, 1);
-    newItems.splice(targetIndex, 0, draggedItem);
-    
-    setSelectedTx({ ...selectedTx, items: newItems });
-    setDraggedItemIndex(null);
-    setActiveDragHandleIndex(null);
   };
 
   return (
@@ -242,73 +208,13 @@ function History() {
                 />
               </div>
 
-              <div className="data-table-container">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th style={{width: '40px'}}>이동</th>
-                      <th style={{width: '80px'}}>날짜</th>
-                      <th>품목 (조합됨)</th>
-                      <th>규격 (비고)</th>
-                      <th style={{width: '70px'}}>단위</th>
-                      <th style={{width: '80px'}}>수량</th>
-                      <th style={{width: '120px'}}>단가 (입력)</th>
-                      <th style={{width: '120px'}}>공급가액</th>
-                      <th style={{width: '50px'}}>삭제</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {selectedTx.items.map((item, index) => (
-                      <tr 
-                        key={index}
-                        draggable={activeDragHandleIndex === index}
-                        onDragStart={(e) => handleDragStart(e, index)}
-                        onDragOver={handleDragOver}
-                        onDrop={(e) => handleDrop(e, index)}
-                        style={{ 
-                          opacity: draggedItemIndex === index ? 0.5 : 1,
-                          transition: 'background-color 0.2s',
-                          borderBottom: draggedItemIndex !== null && draggedItemIndex !== index ? '2px solid transparent' : '1px solid var(--border-color)',
-                        }}
-                        onDragEnter={(e) => e.currentTarget.style.backgroundColor = '#f1f5f9'}
-                        onDragLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
-                      >
-                        <td 
-                          style={{ textAlign: 'center', color: '#94a3b8', cursor: 'grab' }}
-                          onMouseEnter={() => setActiveDragHandleIndex(index)}
-                          onMouseLeave={() => setActiveDragHandleIndex(null)}
-                        >
-                          <GripVertical size={18} style={{ margin: '0 auto' }} />
-                        </td>
-                        <td><input className="input-field" style={{ padding: '0.25rem' }} value={item.date} onChange={e => handleItemChange(index, 'date', e.target.value)} /></td>
-                        <td><input className="input-field" style={{ padding: '0.25rem' }} value={item.name} onChange={e => handleItemChange(index, 'name', e.target.value)} /></td>
-                        <td><input className="input-field" style={{ padding: '0.25rem' }} value={item.spec} onChange={e => handleItemChange(index, 'spec', e.target.value)} /></td>
-                        <td><input className="input-field" style={{ padding: '0.25rem' }} value={item.unit} onChange={e => handleItemChange(index, 'unit', e.target.value)} /></td>
-                        <td><input className="input-field" style={{ padding: '0.25rem' }} type="number" value={item.qty} onChange={e => handleItemChange(index, 'qty', e.target.value)} /></td>
-                        <td>
-                          <input 
-                            className="input-field" 
-                            style={{ padding: '0.25rem', borderColor: '#3b82f6', textAlign: 'right' }} 
-                            type="text" 
-                            placeholder="단가" 
-                            value={item.price ? Number(item.price).toLocaleString() : ''} 
-                            onChange={e => {
-                              const raw = e.target.value.replace(/[^0-9]/g, '');
-                              handleItemChange(index, 'price', raw ? Number(raw) : 0);
-                            }} 
-                          />
-                        </td>
-                        <td style={{ textAlign: 'right', paddingRight: '1rem', fontWeight: '500' }}>{Number(item.supply).toLocaleString()}</td>
-                        <td style={{ textAlign: 'center' }}>
-                          <button className="btn" style={{ padding: '0.25rem', color: 'red', border: 'none' }} onClick={() => deleteItem(index)}>
-                            <Trash2 size={16} />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <TransactionItemsTable
+                items={selectedTx.items}
+                onItemChange={handleItemChange}
+                onReorder={setItems}
+                onDeleteItem={deleteItem}
+                dateColWidth="80px"
+              />
             </>
           ) : (
             <div style={{ padding: '2rem', textAlign: 'center', color: 'gray' }}>

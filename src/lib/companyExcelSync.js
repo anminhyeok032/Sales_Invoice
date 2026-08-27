@@ -6,7 +6,7 @@ const HANDLE_KEY = 'companyExcelHandle';
 
 export { isFileSystemAccessSupported, ensurePermission };
 
-export async function saveCompanyHandle(handle) {
+async function saveCompanyHandle(handle) {
   return saveHandle(HANDLE_KEY, handle);
 }
 
@@ -52,7 +52,7 @@ const COMPANY_FIELD_DEFS = [
   { key: 'phone', aliases: ['전화', '전화번호', '연락처'], fallbackIndex: 8 },
 ];
 
-export function parseWorkbookToCompanies(arrayBuffer) {
+function parseWorkbookToCompanies(arrayBuffer) {
   const wb = XLSX.read(arrayBuffer, { type: 'array' });
   const sheet = wb.Sheets[wb.SheetNames[0]];
   const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 });
@@ -83,7 +83,7 @@ export function parseWorkbookToCompanies(arrayBuffer) {
   return companies;
 }
 
-export function companiesToWorkbookBuffer(companies) {
+function companiesToWorkbookBuffer(companies) {
   const aoa = [TITLE_ROW, HEADER_ROW];
   companies.forEach((c, idx) => {
     aoa.push([null, idx + 1, c.name || '', c.president || '', c.regNo || '', c.businessType || '', c.businessItem || '', c.address || '', c.phone || '']);

@@ -4,7 +4,6 @@ import History from './components/History';
 import CompanyManager from './components/CompanyManager';
 import { FileSpreadsheet, History as HistoryIcon, Building2 } from 'lucide-react';
 import useStore from './store';
-import './index.css';
 
 function App() {
   const [activeTab, setActiveTab] = useState('new');

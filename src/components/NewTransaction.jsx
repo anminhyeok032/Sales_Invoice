@@ -1,11 +1,14 @@
 import React, { useState, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import useStore from '../store';
-import { Upload, Save, Printer, Plus, Trash2, GripVertical } from 'lucide-react';
+import { Upload, Save, Printer, Plus } from 'lucide-react';
 import TransactionPrintTemplate from './TransactionPrintTemplate';
 import { useReactToPrint } from 'react-to-print';
 import { writeTransactionsBackup } from '../lib/transactionExcelSync';
 import { resolveColumnMapping } from '../lib/excelSchema';
+import { applyItemChange, createEmptyItem } from '../lib/transactionItems';
+import { findReceiverInfo } from '../lib/companyLookup';
+import TransactionItemsTable from './TransactionItemsTable';
 
 // Column layout can vary between NC가공일지 workbooks; header text is matched
 // against these aliases so reordered/renamed columns still resolve correctly.
@@ -158,66 +161,22 @@ function NewTransaction() {
   const currentItems = groupedData[selectedCompany] || [];
 
 
+  const setCurrentItems = (items) => {
+    setGroupedData({ ...groupedData, [selectedCompany]: items });
+  };
+
   const handleItemChange = (index, field, value) => {
-    const newGrouped = { ...groupedData };
-    const items = [...newGrouped[selectedCompany]];
-    
-    items[index] = { ...items[index], [field]: value };
-
-    if (field === 'price' || field === 'qty') {
-      const q = Number(items[index].qty) || 0;
-      const p = Number(items[index].price) || 0;
-      items[index].supply = q * p;
-      items[index].tax = Math.floor(items[index].supply * 0.1);
-    }
-
-    newGrouped[selectedCompany] = items;
-    setGroupedData(newGrouped);
-  };
-
-  const [draggedItemIndex, setDraggedItemIndex] = useState(null);
-  const [activeDragHandleIndex, setActiveDragHandleIndex] = useState(null);
-
-  const handleDragStart = (e, index) => {
-    setDraggedItemIndex(index);
-    e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("text/plain", index);
-  };
-
-  const handleDragOver = (e) => {
-    e.preventDefault();
-  };
-
-  const handleDrop = (e, targetIndex) => {
-    e.preventDefault();
-    if (draggedItemIndex === null || draggedItemIndex === targetIndex) return;
-    
-    const newGrouped = { ...groupedData };
-    const items = [...newGrouped[selectedCompany]];
-    
-    const [draggedItem] = items.splice(draggedItemIndex, 1);
-    items.splice(targetIndex, 0, draggedItem);
-    
-    newGrouped[selectedCompany] = items;
-    setGroupedData(newGrouped);
-    setDraggedItemIndex(null);
-    setActiveDragHandleIndex(null);
+    setCurrentItems(applyItemChange(groupedData[selectedCompany], index, field, value));
   };
 
   const addItem = () => {
-    const newGrouped = { ...groupedData };
-    const items = [...newGrouped[selectedCompany]];
-    items.push({ date: '', name: '', spec: '', unit: 'EA', qty: 0, price: 0, supply: 0, tax: 0, note: '' });
-    newGrouped[selectedCompany] = items;
-    setGroupedData(newGrouped);
+    setCurrentItems([...groupedData[selectedCompany], createEmptyItem()]);
   };
 
   const deleteItem = (index) => {
-    const newGrouped = { ...groupedData };
-    const items = [...newGrouped[selectedCompany]];
+    const items = [...groupedData[selectedCompany]];
     items.splice(index, 1);
-    newGrouped[selectedCompany] = items;
-    setGroupedData(newGrouped);
+    setCurrentItems(items);
   };
 
   const handleSave = () => {
@@ -233,11 +192,7 @@ function NewTransaction() {
     alert(`${selectedCompany} 거래명세서가 로컬에 저장되었습니다!`);
   };
 
-  const getReceiverInfo = () => {
-    return companies.find(c => c.name === selectedCompany) || {
-      regNo: '', name: selectedCompany, president: '', address: '', businessType: '', businessItem: ''
-    };
-  };
+  const getReceiverInfo = () => findReceiverInfo(companies, selectedCompany);
 
   return (
     <div>
@@ -304,73 +259,13 @@ function NewTransaction() {
               <input className="input-field" value={currentDate} onChange={e => setCurrentDate(e.target.value)} />
             </div>
 
-            <div className="data-table-container">
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th style={{width: '40px'}}>이동</th>
-                    <th style={{width: '110px'}}>날짜</th>
-                    <th>품목 (조합됨)</th>
-                    <th>규격 (비고)</th>
-                    <th style={{width: '70px'}}>단위</th>
-                    <th style={{width: '80px'}}>수량</th>
-                    <th style={{width: '120px'}}>단가 (입력)</th>
-                    <th style={{width: '120px'}}>공급가액</th>
-                    <th style={{width: '50px'}}>삭제</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {currentItems.map((item, index) => (
-                    <tr 
-                      key={index}
-                      draggable={activeDragHandleIndex === index}
-                      onDragStart={(e) => handleDragStart(e, index)}
-                      onDragOver={handleDragOver}
-                      onDrop={(e) => handleDrop(e, index)}
-                      style={{ 
-                        opacity: draggedItemIndex === index ? 0.5 : 1,
-                        transition: 'background-color 0.2s',
-                        borderBottom: draggedItemIndex !== null && draggedItemIndex !== index ? '2px solid transparent' : '1px solid var(--border-color)',
-                      }}
-                      onDragEnter={(e) => e.currentTarget.style.backgroundColor = '#f1f5f9'}
-                      onDragLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
-                    >
-                      <td 
-                        style={{ textAlign: 'center', color: '#94a3b8', cursor: 'grab' }}
-                        onMouseEnter={() => setActiveDragHandleIndex(index)}
-                        onMouseLeave={() => setActiveDragHandleIndex(null)}
-                      >
-                        <GripVertical size={18} style={{ margin: '0 auto' }} />
-                      </td>
-                      <td><input className="input-field" style={{ padding: '0.25rem' }} value={item.date} onChange={e => handleItemChange(index, 'date', e.target.value)} /></td>
-                      <td><input className="input-field" style={{ padding: '0.25rem' }} value={item.name} onChange={e => handleItemChange(index, 'name', e.target.value)} /></td>
-                      <td><input className="input-field" style={{ padding: '0.25rem' }} value={item.spec} onChange={e => handleItemChange(index, 'spec', e.target.value)} /></td>
-                      <td><input className="input-field" style={{ padding: '0.25rem' }} value={item.unit} onChange={e => handleItemChange(index, 'unit', e.target.value)} /></td>
-                      <td><input className="input-field" style={{ padding: '0.25rem' }} type="number" value={item.qty} onChange={e => handleItemChange(index, 'qty', e.target.value)} /></td>
-                      <td>
-                        <input 
-                          className="input-field" 
-                          style={{ padding: '0.25rem', borderColor: '#3b82f6', textAlign: 'right' }} 
-                          type="text" 
-                          placeholder="단가" 
-                          value={item.price ? Number(item.price).toLocaleString() : ''} 
-                          onChange={e => {
-                            const raw = e.target.value.replace(/[^0-9]/g, '');
-                            handleItemChange(index, 'price', raw ? Number(raw) : 0);
-                          }} 
-                        />
-                      </td>
-                      <td style={{ textAlign: 'right', paddingRight: '1rem', fontWeight: '500' }}>{Number(item.supply).toLocaleString()}</td>
-                      <td style={{ textAlign: 'center' }}>
-                        <button className="btn" style={{ padding: '0.25rem', color: 'red', border: 'none' }} onClick={() => deleteItem(index)}>
-                          <Trash2 size={16} />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <TransactionItemsTable
+              items={currentItems}
+              onItemChange={handleItemChange}
+              onReorder={setCurrentItems}
+              onDeleteItem={deleteItem}
+              dateColWidth="110px"
+            />
           </div>
         </div>
       )}

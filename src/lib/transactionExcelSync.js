@@ -35,7 +35,7 @@ export async function disconnectBackupFile() {
 
 const HEADER_ROW = ['연도', '월', '거래처명', '작성일자', '항목날짜', '품목', '규격', '단위', '수량', '단가', '공급가액', '세액', '비고'];
 
-export function transactionsToWorkbookBuffer(transactions) {
+function transactionsToWorkbookBuffer(transactions) {
   const aoa = [HEADER_ROW];
   transactions.forEach((tx) => {
     (tx.items || []).forEach((item) => {

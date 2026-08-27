@@ -8,7 +8,7 @@
  *    both files fall back to today's hardcoded positions without crashing.
  */
 
-export function normalizeHeader(value) {
+function normalizeHeader(value) {
   if (value == null) return '';
   return String(value)
     .replace(/[\s.,/\\()-]+/g, '')
@@ -16,7 +16,7 @@ export function normalizeHeader(value) {
     .toUpperCase();
 }
 
-export function mapColumns(headerRow, fieldDefs) {
+function mapColumns(headerRow, fieldDefs) {
   const map = {};
   (headerRow || []).forEach((cell, idx) => {
     const norm = normalizeHeader(cell);
@@ -31,7 +31,7 @@ export function mapColumns(headerRow, fieldDefs) {
   return map;
 }
 
-export function findHeaderRow(rows, fieldDefs, { maxScanRows = 10 } = {}) {
+function findHeaderRow(rows, fieldDefs, { maxScanRows = 10 } = {}) {
   const requiredKeys = fieldDefs.filter((f) => f.required).map((f) => f.key);
   let best = null;
   for (let i = 0; i < Math.min(maxScanRows, rows.length); i++) {
