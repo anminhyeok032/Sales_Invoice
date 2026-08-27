@@ -300,7 +300,7 @@ function NewTransaction() {
                 <thead>
                   <tr>
                     <th style={{width: '40px'}}>이동</th>
-                    <th style={{width: '80px'}}>날짜</th>
+                    <th style={{width: '110px'}}>날짜</th>
                     <th>품목 (조합됨)</th>
                     <th>규격 (비고)</th>
                     <th style={{width: '70px'}}>단위</th>

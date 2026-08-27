@@ -98,7 +98,7 @@ const TransactionPrintTemplate = React.forwardRef(({ data, receiver, supplier, d
         <div className="statement-header">
           <div className="statement-no">No. </div>
           <div className="statement-title-wrap">
-            <div className="statement-title">거래명세표</div>
+            <div className="statement-title">거 래 명 세 표</div>
             <div className="statement-subtitle">{title}</div>
           </div>
           <div className="statement-date">작성일자: {date}</div>
@@ -226,6 +226,7 @@ const TransactionPrintTemplate = React.forwardRef(({ data, receiver, supplier, d
       {pages.map((pageItems, pageIndex) => (
         <div key={pageIndex} className="print-container" style={{ pageBreakAfter: pageIndex < pages.length - 1 ? 'always' : 'auto' }}>
           {renderHalf('receiver', pageItems, pageIndex === pages.length - 1)}
+          <div className="statement-divider" />
           {renderHalf('supplier', pageItems, pageIndex === pages.length - 1)}
         </div>
       ))}
