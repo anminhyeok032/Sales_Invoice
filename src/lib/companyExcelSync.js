@@ -1,52 +1,21 @@
 import * as XLSX from 'xlsx';
+import { saveHandle, loadHandle, clearHandle, isFileSystemAccessSupported, ensurePermission } from './fileHandleStore';
 
-const DB_NAME = '거래명세서-자동-관리-fs';
-const STORE_NAME = 'handles';
 const HANDLE_KEY = 'companyExcelHandle';
 
-function openDb() {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, 1);
-    req.onupgradeneeded = () => {
-      req.result.createObjectStore(STORE_NAME);
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
+export { isFileSystemAccessSupported, ensurePermission };
+
+export async function saveCompanyHandle(handle) {
+  return saveHandle(HANDLE_KEY, handle);
 }
 
-export async function saveHandle(handle) {
-  const db = await openDb();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readwrite');
-    tx.objectStore(STORE_NAME).put(handle, HANDLE_KEY);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
+export async function loadCompanyHandle() {
+  return loadHandle(HANDLE_KEY);
 }
 
-export async function loadHandle() {
-  const db = await openDb();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readonly');
-    const req = tx.objectStore(STORE_NAME).get(HANDLE_KEY);
-    req.onsuccess = () => resolve(req.result || null);
-    req.onerror = () => reject(req.error);
-  });
+export async function clearCompanyHandle() {
+  return clearHandle(HANDLE_KEY);
 }
-
-export async function clearHandle() {
-  const db = await openDb();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readwrite');
-    tx.objectStore(STORE_NAME).delete(HANDLE_KEY);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-}
-
-export const isFileSystemAccessSupported = () =>
-  typeof window !== 'undefined' && typeof window.showOpenFilePicker === 'function';
 
 export async function pickExcelFile() {
   const [handle] = await window.showOpenFilePicker({
@@ -60,14 +29,8 @@ export async function pickExcelFile() {
     excludeAcceptAllOption: false,
     multiple: false,
   });
-  await saveHandle(handle);
+  await saveCompanyHandle(handle);
   return handle;
-}
-
-export async function ensurePermission(handle, mode = 'readwrite') {
-  const opts = { mode };
-  if ((await handle.queryPermission(opts)) === 'granted') return true;
-  return (await handle.requestPermission(opts)) === 'granted';
 }
 
 // Column layout matches the existing 업체목록.xls template:

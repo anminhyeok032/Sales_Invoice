@@ -21,7 +21,7 @@ jobs:
       - run: npm run build
 
       - name: Rename build output for download
-        run: cp dist/index.html "dist/거래명세서-자동-관리.html"
+        run: cp dist/index.html dist/invoice-app.html
 
       - name: Publish/update the "latest" release
         uses: softprops/action-gh-release@v2
@@ -29,4 +29,4 @@ jobs:
           tag_name: latest
           name: "최신 빌드 (${{ github.sha }})"
           make_latest: true
-          files: dist/거래명세서-자동-관리.html
+          files: dist/invoice-app.html

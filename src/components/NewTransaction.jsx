@@ -4,6 +4,7 @@ import useStore from '../store';
 import { Upload, Save, Printer, Plus, Trash2, GripVertical } from 'lucide-react';
 import TransactionPrintTemplate from './TransactionPrintTemplate';
 import { useReactToPrint } from 'react-to-print';
+import { writeTransactionsBackup } from '../lib/transactionExcelSync';
 
 // Helper to convert Excel serial date to MM/DD
 const excelDateToJSDate = (serial) => {
@@ -219,6 +220,7 @@ function NewTransaction() {
       date: currentDate,
       items: currentItems
     });
+    writeTransactionsBackup(useStore.getState().transactions).catch(err => console.error('엑셀 백업 저장 실패:', err));
     alert(`${selectedCompany} 거래명세서가 로컬에 저장되었습니다!`);
   };
 

@@ -1,13 +1,74 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import useStore from '../store';
 import { useReactToPrint } from 'react-to-print';
 import TransactionPrintTemplate from './TransactionPrintTemplate';
-import { Printer, Trash2, Plus, Save, GripVertical } from 'lucide-react';
+import { Printer, Trash2, Plus, Save, GripVertical, Link2, Unlink } from 'lucide-react';
+import {
+  isFileSystemAccessSupported,
+  getConnectedHandle,
+  connectBackupFile,
+  disconnectBackupFile,
+  writeTransactionsBackup,
+} from '../lib/transactionExcelSync';
 
 function History() {
-  const { transactions, myCompany, companies, deleteTransaction, saveTransaction } = useStore();
+  const {
+    transactions, myCompany, companies, deleteTransaction, saveTransaction,
+    transactionExcelFileName, setTransactionExcelFileName,
+  } = useStore();
   const [selectedTx, setSelectedTx] = useState(null);
   const printRef = useRef();
+
+  // --- Local excel backup of the saved transaction history (write-only) ---
+  const [backupStatus, setBackupStatus] = useState('checking'); // checking | unsupported | disconnected | connected
+  const [backupError, setBackupError] = useState('');
+
+  useEffect(() => {
+    if (!isFileSystemAccessSupported()) {
+      setBackupStatus('unsupported');
+      return;
+    }
+    (async () => {
+      const handle = await getConnectedHandle();
+      if (handle) {
+        setTransactionExcelFileName(handle.name);
+        setBackupStatus('connected');
+      } else {
+        setBackupStatus('disconnected');
+      }
+    })();
+  }, []);
+
+  const handleConnectBackup = async () => {
+    try {
+      const handle = await connectBackupFile();
+      setTransactionExcelFileName(handle.name);
+      setBackupStatus('connected');
+      await writeTransactionsBackup(useStore.getState().transactions);
+      setBackupError('');
+    } catch (err) {
+      if (err.name !== 'AbortError') {
+        setBackupError('백업 파일 연결에 실패했습니다: ' + err.message);
+      }
+    }
+  };
+
+  const handleDisconnectBackup = async () => {
+    await disconnectBackupFile();
+    setTransactionExcelFileName('');
+    setBackupStatus('disconnected');
+    setBackupError('');
+  };
+
+  const backupNow = async () => {
+    if (backupStatus !== 'connected') return;
+    try {
+      await writeTransactionsBackup(useStore.getState().transactions);
+      setBackupError('');
+    } catch (err) {
+      setBackupError('백업 저장 중 오류가 발생했습니다: ' + err.message);
+    }
+  };
 
   const handlePrint = useReactToPrint({
     contentRef: printRef,
@@ -51,6 +112,7 @@ function History() {
   const handleSave = () => {
     if (!selectedTx) return;
     saveTransaction(selectedTx);
+    backupNow();
     alert('수정된 내용이 안전하게 저장되었습니다!');
   };
 
@@ -87,6 +149,35 @@ function History() {
         <h1>저장된 내역 관리</h1>
       </div>
 
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem',
+        padding: '0.75rem', backgroundColor: '#f8fafc', borderRadius: '6px', flexWrap: 'wrap'
+      }}>
+        {backupStatus === 'checking' && (
+          <span style={{ fontSize: '0.875rem', color: '#64748b' }}>엑셀 백업 상태 확인 중...</span>
+        )}
+        {backupStatus === 'unsupported' && (
+          <span style={{ fontSize: '0.875rem', color: '#64748b' }}>
+            이 브라우저는 로컬 엑셀 백업을 지원하지 않습니다 (Chrome 또는 Edge에서만 가능).
+          </span>
+        )}
+        {backupStatus === 'disconnected' && (
+          <>
+            <span style={{ fontSize: '0.875rem', color: '#64748b' }}>저장된 내역이 로컬 엑셀 파일로 백업되고 있지 않습니다.</span>
+            <button className="btn" onClick={handleConnectBackup}><Link2 size={16} /> 엑셀 백업 연결</button>
+          </>
+        )}
+        {backupStatus === 'connected' && (
+          <>
+            <span style={{ fontSize: '0.875rem', color: '#16a34a', fontWeight: 500 }}>
+              엑셀 백업됨: {transactionExcelFileName} (저장할 때마다 자동 갱신)
+            </span>
+            <button className="btn" onClick={handleDisconnectBackup}><Unlink size={16} /> 백업 해제</button>
+          </>
+        )}
+        {backupError && <span style={{ fontSize: '0.875rem', color: 'red', width: '100%' }}>{backupError}</span>}
+      </div>
+
       <div style={{ display: 'flex', gap: '1.5rem', alignItems: 'flex-start' }}>
         {/* Left: List of saved transactions */}
         <div className="card" style={{ minWidth: '350px', flexShrink: 0 }}>
@@ -115,6 +206,7 @@ function History() {
                         <button className="btn" style={{ padding: '0.25rem', color: 'red' }} onClick={() => {
                           deleteTransaction(tx.id);
                           if (selectedTx?.id === tx.id) setSelectedTx(null);
+                          backupNow();
                         }}>
                           <Trash2 size={16} />
                         </button>

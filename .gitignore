@@ -25,3 +25,8 @@ dist-ssr
 
 # Real business data / personal info (not meant for the public repo)
 private-data/
+
+# Safety net: any excel file saved directly at the project root (e.g. the
+# transaction history backup file, if a user picks this folder in the save dialog)
+/*.xlsx
+/*.xls

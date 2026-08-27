@@ -66,6 +66,10 @@ const useStore = create(
         transactions: state.transactions.filter(t => t.id !== id)
       })),
 
+      // Local excel backup of the saved transaction history (write-only, File System Access API handle lives in IndexedDB)
+      transactionExcelFileName: '',
+      setTransactionExcelFileName: (name) => set({ transactionExcelFileName: name }),
+
       // Excel Session State (persisted across navigation and reload)
       excelRawData: {}, 
       excelSheetNames: [],

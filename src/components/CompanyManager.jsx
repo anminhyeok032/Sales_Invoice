@@ -4,8 +4,8 @@ import { Plus, Trash2, Save, X, Link2, Unlink, RefreshCw } from 'lucide-react';
 import {
   isFileSystemAccessSupported,
   pickExcelFile,
-  loadHandle,
-  clearHandle,
+  loadCompanyHandle,
+  clearCompanyHandle,
   ensurePermission,
   readCompaniesFromHandle,
   writeCompaniesToHandle,
@@ -29,7 +29,7 @@ function CompanyManager() {
       return;
     }
     (async () => {
-      const handle = await loadHandle();
+      const handle = await loadCompanyHandle();
       if (!handle) {
         setSyncStatus('disconnected');
         return;
@@ -101,7 +101,7 @@ function CompanyManager() {
   };
 
   const handleDisconnectExcel = async () => {
-    await clearHandle();
+    await clearCompanyHandle();
     fileHandleRef.current = null;
     setCompanyExcelFileName('');
     setSyncStatus('disconnected');
