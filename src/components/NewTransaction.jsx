@@ -5,6 +5,20 @@ import { Upload, Save, Printer, Plus, Trash2, GripVertical } from 'lucide-react'
 import TransactionPrintTemplate from './TransactionPrintTemplate';
 import { useReactToPrint } from 'react-to-print';
 import { writeTransactionsBackup } from '../lib/transactionExcelSync';
+import { resolveColumnMapping } from '../lib/excelSchema';
+
+// Column layout can vary between NC가공일지 workbooks; header text is matched
+// against these aliases so reordered/renamed columns still resolve correctly.
+// Only fields actually consumed below are listed (장비/제품No/가공시간/외주 are unused today).
+const NC_LOG_FIELD_DEFS = [
+  { key: 'date', aliases: ['날짜', '일자', '작업일자', '작업일'], fallbackIndex: 1 },
+  { key: 'company', aliases: ['업체', '거래처', '업체명', '거래처명'], fallbackIndex: 2, required: true },
+  { key: 'moldNo', aliases: ['금형No', '금형번호', '금형'], fallbackIndex: 3 },
+  { key: 'newOrMod', aliases: ['신작or수정', '신작/수정', '신작수정', '구분'], fallbackIndex: 4 },
+  { key: 'core', aliases: ['코어'], fallbackIndex: 6 },
+  { key: 'qty', aliases: ['수량', '수량(EA)'], fallbackIndex: 8 },
+  { key: 'note', aliases: ['비고', '메모', '특이사항'], fallbackIndex: 11 },
+];
 
 // Helper to convert Excel serial date to MM/DD
 const excelDateToJSDate = (serial) => {
@@ -83,33 +97,28 @@ function NewTransaction() {
     const json = rawData[sheetName];
     if (!json) return;
     
-    // Find where data likely starts by looking for header keywords, or default to row 3
-    let startRow = 2;
-    for (let i = 0; i < 10; i++) {
-      if (json[i] && (json[i].includes('날짜') || json[i].includes('일자') || json[i].includes('업체') || json[i].includes('거래처'))) {
-        startRow = i + 1;
-        break;
-      }
-    }
+    const { columnMap, dataStartRow } = resolveColumnMapping(json, NC_LOG_FIELD_DEFS, {
+      maxScanRows: 10,
+      fallbackDataStartRow: 2,
+    });
 
     const newGroupedData = {};
 
-    for (let i = startRow; i < json.length; i++) {
+    for (let i = dataStartRow; i < json.length; i++) {
       const row = json[i];
       if (!row || row.length === 0) continue;
-      
-      // Headers: No., 날짜, 업체, 금형 No., 신작or수정, 장비, 코어, 제품 No., 수량, 가공 시간, 외주, 비고
-      const rawDate = row[1];
-      const companyName = row[2];
-      
+
+      const rawDate = columnMap.date != null ? row[columnMap.date] : undefined;
+      const companyName = columnMap.company != null ? row[columnMap.company] : undefined;
+
       if (!companyName) continue;
 
-      const moldNo = row[3] || '';
-      const newOrMod = row[4] || '';
-      const core = row[6] || '';
-      const qty = row[8] || 0;
+      const moldNo = (columnMap.moldNo != null && row[columnMap.moldNo]) || '';
+      const newOrMod = (columnMap.newOrMod != null && row[columnMap.newOrMod]) || '';
+      const core = (columnMap.core != null && row[columnMap.core]) || '';
+      const qty = (columnMap.qty != null && row[columnMap.qty]) || 0;
       const unit = 'EA';
-      const note = row[11] || '';
+      const note = (columnMap.note != null && row[columnMap.note]) || '';
 
       const parts = [];
       if (moldNo) parts.push(moldNo);
