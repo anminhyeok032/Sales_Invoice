@@ -1,0 +1,32 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm ci
+      - run: npm run build
+
+      - name: Rename build output for download
+        run: cp dist/index.html "dist/거래명세서-자동-관리.html"
+
+      - name: Publish/update the "latest" release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: "최신 빌드 (${{ github.sha }})"
+          make_latest: true
+          files: dist/거래명세서-자동-관리.html

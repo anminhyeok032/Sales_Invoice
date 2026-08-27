@@ -1,0 +1,380 @@
+import React, { useState, useRef } from 'react';
+import * as XLSX from 'xlsx';
+import useStore from '../store';
+import { Upload, Save, Printer, Plus, Trash2, GripVertical } from 'lucide-react';
+import TransactionPrintTemplate from './TransactionPrintTemplate';
+import { useReactToPrint } from 'react-to-print';
+
+// Helper to convert Excel serial date to MM/DD
+const excelDateToJSDate = (serial) => {
+  if (!serial || isNaN(serial)) return serial; // If it's already a string or empty
+  const utc_days  = Math.floor(serial - 25569);
+  const utc_value = utc_days * 86400;                                        
+  const date_info = new Date(utc_value * 1000);
+  const year = date_info.getFullYear().toString().slice(-2);
+  const month = date_info.getMonth() + 1;
+  const day = date_info.getDate();
+  return `${year}/${month.toString().padStart(2, '0')}/${day.toString().padStart(2, '0')}`;
+}
+
+function NewTransaction() {
+  const { 
+    myCompany, companies, saveTransaction,
+    excelRawData, excelSheetNames, excelSelectedSheet, excelGroupedData, excelSelectedCompany,
+    setExcelState
+  } = useStore();
+
+  const groupedData = excelGroupedData || {};
+  const sheetNames = excelSheetNames || [];
+  const selectedSheet = excelSelectedSheet || '';
+  const selectedCompany = excelSelectedCompany || '';
+
+  const setGroupedData = (data) => setExcelState({ excelGroupedData: data });
+  const setSelectedCompany = (data) => setExcelState({ excelSelectedCompany: data });
+  
+  const [year, setYear] = useState(new Date().getFullYear());
+  const [currentDate, setCurrentDate] = useState(new Date().toISOString().split('T')[0].replace(/-/g, '/'));
+
+  const printRef = useRef();
+
+  const handlePrint = useReactToPrint({
+    contentRef: printRef,
+    documentTitle: `거래명세서_${selectedCompany}_${currentDate.replace(/\//g, '')}`,
+  });
+
+  const handleFileUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const data = new Uint8Array(event.target.result);
+      const wb = XLSX.read(data, { type: 'array' });
+      
+      const rawData = {};
+      wb.SheetNames.forEach(sheet => {
+        rawData[sheet] = XLSX.utils.sheet_to_json(wb.Sheets[sheet], { header: 1 });
+      });
+
+      const months = wb.SheetNames;
+      setExcelState({
+        excelRawData: rawData,
+        excelSheetNames: months,
+        excelSelectedSheet: months.length > 0 ? months[0] : ''
+      });
+      
+      if (months.length > 0) {
+        parseSheet(rawData, months[0]);
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  const handleSheetSelect = (e) => {
+    const sheetName = e.target.value;
+    setExcelState({ excelSelectedSheet: sheetName });
+    if (excelRawData && Object.keys(excelRawData).length > 0) {
+      parseSheet(excelRawData, sheetName);
+    }
+  };
+
+  const parseSheet = (rawData, sheetName) => {
+    const json = rawData[sheetName];
+    if (!json) return;
+    
+    // Find where data likely starts by looking for header keywords, or default to row 3
+    let startRow = 2;
+    for (let i = 0; i < 10; i++) {
+      if (json[i] && (json[i].includes('날짜') || json[i].includes('일자') || json[i].includes('업체') || json[i].includes('거래처'))) {
+        startRow = i + 1;
+        break;
+      }
+    }
+
+    const newGroupedData = {};
+
+    for (let i = startRow; i < json.length; i++) {
+      const row = json[i];
+      if (!row || row.length === 0) continue;
+      
+      // Headers: No., 날짜, 업체, 금형 No., 신작or수정, 장비, 코어, 제품 No., 수량, 가공 시간, 외주, 비고
+      const rawDate = row[1];
+      const companyName = row[2];
+      
+      if (!companyName) continue;
+
+      const moldNo = row[3] || '';
+      const newOrMod = row[4] || '';
+      const core = row[6] || '';
+      const qty = row[8] || 0;
+      const unit = 'EA';
+      const note = row[11] || '';
+
+      const parts = [];
+      if (moldNo) parts.push(moldNo);
+      if (core) parts.push(core);
+      if (newOrMod) parts.push(newOrMod);
+      const itemName = parts.join(' / ');
+
+      const formattedDate = excelDateToJSDate(rawDate);
+
+      const item = {
+        date: formattedDate || '',
+        name: itemName,
+        spec: note,
+        unit: unit,
+        qty: Number(qty) || 0,
+        price: 0,
+        supply: 0,
+        tax: 0,
+        note: ''
+      };
+
+      if (!newGroupedData[companyName]) {
+        newGroupedData[companyName] = [];
+      }
+      newGroupedData[companyName].push(item);
+    }
+
+    setGroupedData(newGroupedData);
+    const comps = Object.keys(newGroupedData);
+    if (comps.length > 0) {
+      setSelectedCompany(comps[0]);
+    } else {
+      setSelectedCompany('');
+    }
+  };
+
+  const currentItems = groupedData[selectedCompany] || [];
+
+
+  const handleItemChange = (index, field, value) => {
+    const newGrouped = { ...groupedData };
+    const items = [...newGrouped[selectedCompany]];
+    
+    items[index] = { ...items[index], [field]: value };
+
+    if (field === 'price' || field === 'qty') {
+      const q = Number(items[index].qty) || 0;
+      const p = Number(items[index].price) || 0;
+      items[index].supply = q * p;
+      items[index].tax = Math.floor(items[index].supply * 0.1);
+    }
+
+    newGrouped[selectedCompany] = items;
+    setGroupedData(newGrouped);
+  };
+
+  const [draggedItemIndex, setDraggedItemIndex] = useState(null);
+  const [activeDragHandleIndex, setActiveDragHandleIndex] = useState(null);
+
+  const handleDragStart = (e, index) => {
+    setDraggedItemIndex(index);
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", index);
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+  };
+
+  const handleDrop = (e, targetIndex) => {
+    e.preventDefault();
+    if (draggedItemIndex === null || draggedItemIndex === targetIndex) return;
+    
+    const newGrouped = { ...groupedData };
+    const items = [...newGrouped[selectedCompany]];
+    
+    const [draggedItem] = items.splice(draggedItemIndex, 1);
+    items.splice(targetIndex, 0, draggedItem);
+    
+    newGrouped[selectedCompany] = items;
+    setGroupedData(newGrouped);
+    setDraggedItemIndex(null);
+    setActiveDragHandleIndex(null);
+  };
+
+  const addItem = () => {
+    const newGrouped = { ...groupedData };
+    const items = [...newGrouped[selectedCompany]];
+    items.push({ date: '', name: '', spec: '', unit: 'EA', qty: 0, price: 0, supply: 0, tax: 0, note: '' });
+    newGrouped[selectedCompany] = items;
+    setGroupedData(newGrouped);
+  };
+
+  const deleteItem = (index) => {
+    const newGrouped = { ...groupedData };
+    const items = [...newGrouped[selectedCompany]];
+    items.splice(index, 1);
+    newGrouped[selectedCompany] = items;
+    setGroupedData(newGrouped);
+  };
+
+  const handleSave = () => {
+    if (!selectedCompany) return;
+    saveTransaction({
+      year: year,
+      month: parseInt(selectedSheet),
+      companyName: selectedCompany,
+      date: currentDate,
+      items: currentItems
+    });
+    alert(`${selectedCompany} 거래명세서가 로컬에 저장되었습니다!`);
+  };
+
+  const getReceiverInfo = () => {
+    return companies.find(c => c.name === selectedCompany) || {
+      regNo: '', name: selectedCompany, president: '', address: '', businessType: '', businessItem: ''
+    };
+  };
+
+  return (
+    <div>
+      <div className="header">
+        <h1>자동 작성 (엑셀 연동)</h1>
+        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+          <div className="input-group" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <label className="input-label" style={{ margin: 0 }}>해당 연도:</label>
+            <input type="number" className="input-field" style={{ width: '80px' }} value={year} onChange={e => setYear(Number(e.target.value))} />
+          </div>
+          <label className="btn btn-primary" style={{ cursor: 'pointer', margin: 0 }}>
+            <Upload size={18} />
+            가공일지 엑셀 열기
+            <input type="file" accept=".xlsx, .xls" style={{ display: 'none' }} onChange={handleFileUpload} />
+          </label>
+        </div>
+      </div>
+
+      {sheetNames.length > 0 && (
+        <div className="card" style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+          <strong>기준 월 선택:</strong>
+          <select className="input-field" style={{ width: '150px' }} value={selectedSheet} onChange={handleSheetSelect}>
+            {sheetNames.map(sheet => <option key={sheet} value={sheet}>{sheet}</option>)}
+          </select>
+        </div>
+      )}
+
+      {Object.keys(groupedData).length > 0 && (
+        <div style={{ display: 'flex', gap: '1.5rem', alignItems: 'flex-start' }}>
+          <div className="card" style={{ minWidth: '220px', flexShrink: 0 }}>
+            <div className="card-title">거래처 목록</div>
+            <ul style={{ listStyle: 'none', padding: 0 }}>
+              {Object.keys(groupedData).map(comp => (
+                <li 
+                  key={comp} 
+                  onClick={() => setSelectedCompany(comp)}
+                  style={{
+                    padding: '10px 15px',
+                    borderBottom: '1px solid #eee',
+                    cursor: 'pointer',
+                    backgroundColor: selectedCompany === comp ? '#eff6ff' : 'transparent',
+                    fontWeight: selectedCompany === comp ? 'bold' : 'normal',
+                    color: selectedCompany === comp ? '#2563eb' : 'inherit'
+                  }}
+                >
+                  {comp}
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="card" style={{ flexGrow: 1, overflowX: 'auto' }}>
+            <div className="card-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>{selectedCompany} 거래 내역 수정</span>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button className="btn" onClick={addItem}><Plus size={16} /> 줄 추가</button>
+                <button className="btn" onClick={handleSave}><Save size={16} /> 이 회사만 저장</button>
+                <button className="btn btn-primary" onClick={handlePrint}><Printer size={16} /> 출력/PDF</button>
+              </div>
+            </div>
+
+            <div className="input-group" style={{ width: '150px', marginBottom: '1rem' }}>
+              <label className="input-label">출력용 작성일자</label>
+              <input className="input-field" value={currentDate} onChange={e => setCurrentDate(e.target.value)} />
+            </div>
+
+            <div className="data-table-container">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th style={{width: '40px'}}>이동</th>
+                    <th style={{width: '80px'}}>날짜</th>
+                    <th>품목 (조합됨)</th>
+                    <th>규격 (비고)</th>
+                    <th style={{width: '70px'}}>단위</th>
+                    <th style={{width: '80px'}}>수량</th>
+                    <th style={{width: '120px'}}>단가 (입력)</th>
+                    <th style={{width: '120px'}}>공급가액</th>
+                    <th style={{width: '50px'}}>삭제</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {currentItems.map((item, index) => (
+                    <tr 
+                      key={index}
+                      draggable={activeDragHandleIndex === index}
+                      onDragStart={(e) => handleDragStart(e, index)}
+                      onDragOver={handleDragOver}
+                      onDrop={(e) => handleDrop(e, index)}
+                      style={{ 
+                        opacity: draggedItemIndex === index ? 0.5 : 1,
+                        transition: 'background-color 0.2s',
+                        borderBottom: draggedItemIndex !== null && draggedItemIndex !== index ? '2px solid transparent' : '1px solid var(--border-color)',
+                      }}
+                      onDragEnter={(e) => e.currentTarget.style.backgroundColor = '#f1f5f9'}
+                      onDragLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                    >
+                      <td 
+                        style={{ textAlign: 'center', color: '#94a3b8', cursor: 'grab' }}
+                        onMouseEnter={() => setActiveDragHandleIndex(index)}
+                        onMouseLeave={() => setActiveDragHandleIndex(null)}
+                      >
+                        <GripVertical size={18} style={{ margin: '0 auto' }} />
+                      </td>
+                      <td><input className="input-field" style={{ padding: '0.25rem' }} value={item.date} onChange={e => handleItemChange(index, 'date', e.target.value)} /></td>
+                      <td><input className="input-field" style={{ padding: '0.25rem' }} value={item.name} onChange={e => handleItemChange(index, 'name', e.target.value)} /></td>
+                      <td><input className="input-field" style={{ padding: '0.25rem' }} value={item.spec} onChange={e => handleItemChange(index, 'spec', e.target.value)} /></td>
+                      <td><input className="input-field" style={{ padding: '0.25rem' }} value={item.unit} onChange={e => handleItemChange(index, 'unit', e.target.value)} /></td>
+                      <td><input className="input-field" style={{ padding: '0.25rem' }} type="number" value={item.qty} onChange={e => handleItemChange(index, 'qty', e.target.value)} /></td>
+                      <td>
+                        <input 
+                          className="input-field" 
+                          style={{ padding: '0.25rem', borderColor: '#3b82f6', textAlign: 'right' }} 
+                          type="text" 
+                          placeholder="단가" 
+                          value={item.price ? Number(item.price).toLocaleString() : ''} 
+                          onChange={e => {
+                            const raw = e.target.value.replace(/[^0-9]/g, '');
+                            handleItemChange(index, 'price', raw ? Number(raw) : 0);
+                          }} 
+                        />
+                      </td>
+                      <td style={{ textAlign: 'right', paddingRight: '1rem', fontWeight: '500' }}>{Number(item.supply).toLocaleString()}</td>
+                      <td style={{ textAlign: 'center' }}>
+                        <button className="btn" style={{ padding: '0.25rem', color: 'red', border: 'none' }} onClick={() => deleteItem(index)}>
+                          <Trash2 size={16} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div style={{ position: 'fixed', top: 0, left: '-10000px', opacity: 0, pointerEvents: 'none' }}>
+        <TransactionPrintTemplate
+          ref={printRef} 
+          data={currentItems} 
+          supplier={myCompany} 
+          receiver={getReceiverInfo()} 
+          date={currentDate} 
+        />
+      </div>
+    </div>
+  );
+}
+
+export default NewTransaction;
