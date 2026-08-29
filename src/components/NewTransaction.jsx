@@ -12,16 +12,50 @@ import TransactionItemsTable from './TransactionItemsTable';
 
 // Column layout can vary between NC가공일지 workbooks; header text is matched
 // against these aliases so reordered/renamed columns still resolve correctly.
-// Only fields actually consumed below are listed (장비/제품No/가공시간/외주 are unused today).
+// Only fields actually consumed below are listed (장비/제품No/외주 are unused today).
 const NC_LOG_FIELD_DEFS = [
   { key: 'date', aliases: ['날짜', '일자', '작업일자', '작업일'], fallbackIndex: 1 },
   { key: 'company', aliases: ['업체', '거래처', '업체명', '거래처명'], fallbackIndex: 2, required: true },
   { key: 'moldNo', aliases: ['금형No', '금형번호', '금형'], fallbackIndex: 3 },
-  { key: 'newOrMod', aliases: ['신작or수정', '신작/수정', '신작수정', '구분'], fallbackIndex: 4 },
+  { key: 'newOrMod', aliases: ['신작or수정', '신작or수정or자사불량', '신작/수정', '신작수정', '구분'], fallbackIndex: 4 },
   { key: 'core', aliases: ['코어'], fallbackIndex: 6 },
   { key: 'qty', aliases: ['수량', '수량(EA)'], fallbackIndex: 8 },
+  { key: 'processingTime', aliases: ['가공시간', '가공 시간'], fallbackIndex: 9 },
   { key: 'note', aliases: ['비고', '메모', '특이사항'], fallbackIndex: 11 },
 ];
+
+// 가공시간 셀은 두 가지 형태로 들어온다:
+// 1) 순수 숫자 (엑셀 시간값, 하루=1) — 해당 행 전체의 합산 가공시간이 이미 들어있음
+// 2) "각 H:MM" 문자열 — 수량 1개당 소요시간이므로 수량만큼 곱해서 합산해야 함
+const parseHM = (text) => {
+  const m = String(text).trim().match(/^(\d+):(\d{1,2})$/);
+  if (!m) return null;
+  return Number(m[1]) * 60 + Number(m[2]);
+};
+
+const minutesToHM = (minutes) => {
+  const total = Math.round(minutes);
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  return `${h}:${String(m).padStart(2, '0')}`;
+};
+
+const formatProcessingTime = (raw, qty) => {
+  if (raw == null || raw === '') return '';
+
+  if (typeof raw === 'number') {
+    return minutesToHM(raw * 24 * 60);
+  }
+
+  const text = String(raw).trim();
+  if (text.startsWith('각')) {
+    const perUnitMinutes = parseHM(text.replace('각', '').trim());
+    if (perUnitMinutes == null) return text;
+    return minutesToHM(perUnitMinutes * (Number(qty) || 0));
+  }
+
+  return text;
+};
 
 // Helper to convert Excel serial date to MM/DD
 const excelDateToJSDate = (serial) => {
@@ -120,13 +154,13 @@ function NewTransaction() {
       const newOrMod = (columnMap.newOrMod != null && row[columnMap.newOrMod]) || '';
       const core = (columnMap.core != null && row[columnMap.core]) || '';
       const qty = (columnMap.qty != null && row[columnMap.qty]) || 0;
+      const rawProcessingTime = columnMap.processingTime != null ? row[columnMap.processingTime] : undefined;
       const unit = 'EA';
       const note = (columnMap.note != null && row[columnMap.note]) || '';
 
       const parts = [];
       if (moldNo) parts.push(moldNo);
       if (core) parts.push(core);
-      if (newOrMod) parts.push(newOrMod);
       const itemName = parts.join(' / ');
 
       const formattedDate = excelDateToJSDate(rawDate);
@@ -140,7 +174,10 @@ function NewTransaction() {
         price: 0,
         supply: 0,
         tax: 0,
-        note: ''
+        note: '',
+        // 화면 확인용 항목 — 인쇄되는 거래명세표(품목/규격)에는 포함되지 않음
+        newOrMod,
+        processingTime: formatProcessingTime(rawProcessingTime, qty),
       };
 
       if (!newGroupedData[companyName]) {
@@ -262,7 +299,7 @@ function NewTransaction() {
             <TransactionItemsTable
               items={currentItems}
               onItemChange={handleItemChange}
-              onReorder={setCurrentItems}
+              onItemsChange={setCurrentItems}
               onDeleteItem={deleteItem}
               dateColWidth="110px"
             />

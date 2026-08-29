@@ -211,7 +211,7 @@ function History() {
               <TransactionItemsTable
                 items={selectedTx.items}
                 onItemChange={handleItemChange}
-                onReorder={setItems}
+                onItemsChange={setItems}
                 onDeleteItem={deleteItem}
                 dateColWidth="80px"
               />
