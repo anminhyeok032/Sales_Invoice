@@ -5,12 +5,12 @@ const useStore = create(
   persist(
     (set) => ({
       myCompany: {
-        regNo: '222-22-22222',
-        name: '웰포인트',
-        president: '허덕룡',
-        address: '인천광역시 ...',
-        businessType: '제조',
-        businessItem: '정밀 금형',
+        regNo: '111-11-11111',
+        name: '임시 회사',
+        president: '이름',
+        address: '주소',
+        businessType: '분야',
+        businessItem: '세부 분야',
         stamp: '',
       },
       setMyCompany: (company) => set({ myCompany: company }),
@@ -18,7 +18,7 @@ const useStore = create(
       companies: [
         {
           id: '1',
-          name: '화경',
+          name: '임시',
           regNo: '',
           president: '',
           address: '',
