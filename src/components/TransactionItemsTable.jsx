@@ -1,5 +1,5 @@
-import React, { useRef, useState } from 'react';
-import { ChevronDown, ChevronRight, GripVertical, Trash2, Unlink, Filter } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { ChevronDown, ChevronRight, GripVertical, Trash2, Unlink, Filter, Plus } from 'lucide-react';
 import { useDragReorder } from '../hooks/useDragReorder';
 import ColumnFilterMenu from './ColumnFilterMenu';
 import { ITEM_COLUMNS, filterItems, isFilterActive, sortItemsBy } from '../lib/itemTableView';
@@ -14,6 +14,7 @@ import {
   moveItemIntoGroup,
   computeTotals,
   clearTaxes,
+  insertItemAt,
   PRINT_ROWS_PER_PAGE,
 } from '../lib/transactionItems';
 
@@ -28,14 +29,19 @@ const HIGHLIGHT = '#bfdbfe';
 const COL_WIDTH = {
   newOrMod: '44px', qty: '44px', processingTime: '50px',
   spec: '16%', price: '66px', supply: '72px', tax: '62px',
+  actions: '46px',   // 줄 넣기(+) · 삭제(휴지통) · (합쳐진 줄이면) 합치기 해제
 };
 
-function TransactionItemsTable({ items, onItemChange, onItemsChange, onDeleteItem, dateColWidth = '80px' }) {
+// filters/onFiltersChange: 컬럼 필터 상태. 부모가 들고 있다(useItemFilters) — 출력이 지금 보이는
+// 줄만 찍어야 해서 부모도 같은 필터를 알아야 한다.
+function TransactionItemsTable({
+  items, onItemChange, onItemsChange, onDeleteItem, dateColWidth = '80px',
+  filters, onFiltersChange,
+}) {
   // 펼침 상태는 인덱스가 아니라 mergeId로 잡는다. 순서변경/빼내기로 인덱스는 계속 바뀐다.
   const [expandedGroups, setExpandedGroups] = useState(() => new Set());
 
   // 컬럼별 필터: { [컬럼키]: 체크된 값들 }. 값이 없으면 그 컬럼은 필터 없음.
-  const [filters, setFilters] = useState({});
   const [menu, setMenu] = useState(null);   // { key, anchor: 컬럼 제목 요소 }
 
   // 세액 칸은 평소 숨긴다(거의 안 쓴다). 사용자가 "입력"을 눌렀거나, 이미 세액이 든 줄이
@@ -48,7 +54,7 @@ function TransactionItemsTable({ items, onItemChange, onItemsChange, onDeleteIte
   const filtered = isFilterActive(filters);
   const visibleRows = filterItems(items, filters);
 
-  const setColumnFilter = (key, selected) => setFilters((prev) => {
+  const setColumnFilter = (key, selected) => onFiltersChange((prev) => {
     const next = { ...prev };
     if (selected === null) delete next[key];
     else next[key] = selected;
@@ -57,6 +63,23 @@ function TransactionItemsTable({ items, onItemChange, onItemsChange, onDeleteIte
 
   // 위치 대신 제목 요소를 넘겨서, 창이 스크롤/크기 변경을 따라 자리를 다시 잡게 한다.
   const openMenu = (key, e) => setMenu({ key, anchor: e.currentTarget });
+
+  // 줄 끼워 넣기: 새 빈 줄이 들어갈 자리(index)를 받아서 넣고, 곧바로 그 줄의 품목 칸에 커서를 둔다.
+  // 줄은 index 순서로 그려지므로(key) 새 줄의 입력칸은 새로 생기지 않고 기존 칸이 재사용된다 —
+  // autoFocus로는 안 되고, 아이템이 바뀐 뒤에 직접 찾아서 포커스를 준다.
+  const pendingFocus = useRef(null);
+  const insertRow = (index) => {
+    pendingFocus.current = index;
+    onItemsChange(insertItemAt(items, index));
+  };
+  useEffect(() => {
+    const at = pendingFocus.current;
+    if (at === null) return;
+    pendingFocus.current = null;
+    tableRef.current
+      ?.querySelector(`tr[data-drop-kind="row"][data-drop-i="${at}"] td:nth-child(3) input`)
+      ?.focus();
+  }, [items]);
 
   const toggleExpand = (mergeId) => {
     setExpandedGroups((prev) => {
@@ -156,9 +179,9 @@ function TransactionItemsTable({ items, onItemChange, onItemsChange, onDeleteIte
   };
 
   const menuColumn = menu && ITEM_COLUMNS.find((c) => c.key === menu.key);
-  // 합계는 필터와 상관없이 명세서 전체 기준 — 숨긴 줄도 인쇄에는 나가기 때문.
-  const totals = computeTotals(items);
-  const printPages = Math.ceil(items.length / PRINT_ROWS_PER_PAGE);
+  // 합계와 장 수는 지금 보이는 줄 기준 — 출력도 보이는 줄만 찍히므로 화면과 인쇄물이 같다.
+  const totals = computeTotals(visibleRows.map((r) => r.item));
+  const printPages = Math.ceil(visibleRows.length / PRINT_ROWS_PER_PAGE);
   const won = (n) => `₩${n.toLocaleString()}`;
 
   return (
@@ -172,11 +195,11 @@ function TransactionItemsTable({ items, onItemChange, onItemsChange, onDeleteIte
         }}>
           <Filter size={14} />
           <span>
-            {items.length}줄 중 <strong>{visibleRows.length}줄</strong>만 보는 중입니다.
-            숨긴 줄도 저장과 출력에는 그대로 나갑니다. (필터 중에는 순서변경/합치기 불가)
+            {items.length}줄 중 <strong>{visibleRows.length}줄</strong>만 보이며, <strong>출력과 합계도 이 {visibleRows.length}줄만</strong> 기준입니다.
+            (저장은 숨긴 줄까지 전체가 그대로 저장됩니다. 필터 중에는 순서변경/합치기 불가)
           </span>
           <button className="btn" style={{ padding: '0.1rem 0.5rem', fontSize: '0.8125rem' }}
-            onClick={() => setFilters({})}>
+            onClick={() => onFiltersChange({})}>
             전체 필터 해제
           </button>
         </div>
@@ -212,7 +235,7 @@ function TransactionItemsTable({ items, onItemChange, onItemsChange, onDeleteIte
                 </th>
               );
             })}
-            <th style={{ width: '36px' }} title="삭제">삭제</th>
+            <th style={{ width: COL_WIDTH.actions }} title="줄 넣기 / 삭제">작업</th>
           </tr>
         </thead>
         <tbody>
@@ -315,14 +338,25 @@ function TransactionItemsTable({ items, onItemChange, onItemsChange, onDeleteIte
                       <button
                         className="btn"
                         title="합치기 해제"
-                        style={{ padding: '2px', color: '#2563eb', border: 'none', background: 'none' }}
+                        style={{ padding: '1px', color: '#2563eb', border: 'none', background: 'none' }}
                         onClick={() => onItemsChange(unmergeItem(items, index))}
                       >
-                        <Unlink size={14} />
+                        <Unlink size={13} />
                       </button>
                     )}
-                    <button className="btn" title="삭제" style={{ padding: '2px', color: 'red', border: 'none', background: 'none' }} onClick={() => onDeleteItem(index)}>
-                      <Trash2 size={14} />
+                    <button
+                      className="btn"
+                      disabled={filtered}
+                      title={filtered
+                        ? '필터가 걸려 있는 동안에는 줄을 끼워 넣을 수 없습니다 (새 줄이 필터에 가려집니다)'
+                        : '이 줄 아래에 줄 넣기 (Shift+클릭: 이 줄 위에 넣기)'}
+                      style={{ padding: '1px', color: filtered ? '#cbd5e1' : '#16a34a', border: 'none', background: 'none' }}
+                      onClick={(e) => insertRow(e.shiftKey ? index : index + 1)}
+                    >
+                      <Plus size={13} />
+                    </button>
+                    <button className="btn" title="삭제" style={{ padding: '1px', color: 'red', border: 'none', background: 'none' }} onClick={() => onDeleteItem(index)}>
+                      <Trash2 size={13} />
                     </button>
                   </td>
                 </tr>
@@ -363,14 +397,14 @@ function TransactionItemsTable({ items, onItemChange, onItemsChange, onDeleteIte
       </div>
       {(printPages > 1 || filtered) && (
         <p style={{ margin: '0.25rem 0 0', fontSize: '0.75rem', color: '#64748b', textAlign: 'right' }}>
-          {filtered && '합계는 필터로 숨긴 줄까지 포함한 전체 기준입니다. '}
-          {printPages > 1 && `${items.length}줄이라 ${printPages}장으로 출력되며, 인쇄물에는 장마다 그 장의 합계가 찍힙니다.`}
+          {filtered && `합계는 보이는 ${visibleRows.length}줄 기준(출력과 같음). `}
+          {printPages > 1 && `${visibleRows.length}줄이라 ${printPages}장으로 출력되며, 인쇄물에는 장마다 그 장의 합계가 찍힙니다.`}
         </p>
       )}
 
       {items.length > 0 && (
         <div style={{ margin: '0.5rem 0 0', fontSize: '0.8125rem', color: '#64748b', lineHeight: 1.7 }}>
-          <div>각 <strong>컬럼 제목을 누르면</strong> <strong>오름차순 정렬</strong>하거나, 값을 체크해서 <strong>그 값만 골라 볼</strong> 수 있습니다. 정렬은 항목 순서를 실제로 바꾸고(출력 순서도 바뀜), 필터는 보기에서만 숨깁니다.</div>
+          <div>줄 오른쪽 끝의 <strong>＋</strong>를 누르면 그 줄 <strong>아래에 빈 줄</strong>이 끼워집니다(<strong>Shift</strong>+클릭은 위). 각 <strong>컬럼 제목을 누르면</strong> <strong>오름차순 정렬</strong>하거나, 값을 체크해서 <strong>그 값만 골라 볼</strong> 수 있습니다. 정렬은 항목 순서를 실제로 바꾸고(출력 순서도 바뀜), 필터는 <strong>화면과 출력에서 그 줄만 남깁니다</strong>(저장은 전체).</div>
           <div><strong>이동</strong> 칸을 잡고 드래그 → 다른 행 <strong>본문</strong>에 놓으면 순서변경, 다른 행의 <strong>이동 칸</strong>에 놓으면 합치기. 끄는 동안 <strong>마우스 휠</strong>로 위아래로 이동할 수 있고, 창 위·아래 끝으로 가져가도 따라 내려갑니다. <strong>Esc</strong>로 취소.</div>
           <div>합쳐진 행은 <strong>▶</strong>로 펼쳐서 원본을 볼 수 있고, 원본도 드래그해서 <strong>그룹 안 순서변경</strong>이나 <strong>그룹 밖으로 빼내기</strong>가 됩니다. 원본이 1개만 남으면 병합이 자동으로 풀립니다.</div>
           <div>출력(PDF)에는 합쳐진 대표 행만 나가고 원본은 반영되지 않습니다.</div>

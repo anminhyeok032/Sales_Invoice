@@ -3,7 +3,9 @@ import * as XLSX from 'xlsx';
 import useStore, { resolveSupplier } from '../store';
 import { Upload, Save, Printer, Plus } from 'lucide-react';
 import TransactionPrintTemplate from './TransactionPrintTemplate';
-import { useReactToPrint } from 'react-to-print';
+import { openPrintPreview } from '../lib/printPreview';
+import { useItemFilters } from '../hooks/useItemFilters';
+import { filterItems, isFilterActive } from '../lib/itemTableView';
 import { writeTransactionsBackup } from '../lib/transactionExcelSync';
 import { resolveColumnMapping } from '../lib/excelSchema';
 import { applyItemChange, createEmptyItem } from '../lib/transactionItems';
@@ -16,12 +18,14 @@ import { applyOverride, patchFor, withPatch } from '../lib/partyOverride';
 // Column layout can vary between NC가공일지 workbooks; header text is matched
 // against these aliases so reordered/renamed columns still resolve correctly.
 // Only fields actually consumed below are listed (장비/제품No/외주 are unused today).
+// 헤더는 공백/줄바꿈/기호를 지운 뒤 비교한다. 실제 파일의 헤더는 '코어' 줄바꿈 '및 전극'이라
+// 지우고 나면 '코어및전극'이 되는데, 예전에는 별칭에 '코어'만 있어서 이 칸이 통째로 무시되고 있었다.
 const NC_LOG_FIELD_DEFS = [
   { key: 'date', aliases: ['날짜', '일자', '작업일자', '작업일'], fallbackIndex: 1 },
   { key: 'company', aliases: ['업체', '거래처', '업체명', '거래처명'], fallbackIndex: 2, required: true },
   { key: 'moldNo', aliases: ['금형No', '금형번호', '금형'], fallbackIndex: 3 },
   { key: 'newOrMod', aliases: ['신작or수정', '신작or수정or자사불량', '신작/수정', '신작수정', '구분'], fallbackIndex: 4 },
-  { key: 'core', aliases: ['코어'], fallbackIndex: 6 },
+  { key: 'core', aliases: ['코어및전극', '코어/전극', '코어', '전극'], fallbackIndex: 6 },
   { key: 'qty', aliases: ['수량', '수량(EA)'], fallbackIndex: 8 },
   { key: 'processingTime', aliases: ['가공시간', '가공 시간'], fallbackIndex: 9 },
   { key: 'note', aliases: ['비고', '메모', '특이사항'], fallbackIndex: 11 },
@@ -124,11 +128,6 @@ function NewTransaction() {
 
   const printRef = useRef();
 
-  const handlePrint = useReactToPrint({
-    contentRef: printRef,
-    documentTitle: `거래명세서_${selectedCompany}_${currentDate.replace(/\//g, '')}`,
-  });
-
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -193,10 +192,12 @@ function NewTransaction() {
       const unit = 'EA';
       const note = (columnMap.note != null && row[columnMap.note]) || '';
 
-      const parts = [];
-      if (moldNo) parts.push(moldNo);
-      if (core) parts.push(core);
-      const itemName = parts.join(' / ');
+      // 품목 = 금형No / 코어 및 전극 / 구분(신작·수정…). 빈 칸은 건너뛴다.
+      // 구분은 화면 확인용 칸(newOrMod)에도 따로 남기지만, 품목에도 붙어서 명세서에 인쇄된다.
+      const itemName = [moldNo, core, newOrMod]
+        .map((part) => String(part).trim())
+        .filter(Boolean)
+        .join(' / ');
 
       const formattedDate = excelDateToJSDate(rawDate);
 
@@ -231,6 +232,22 @@ function NewTransaction() {
   };
 
   const currentItems = groupedData[selectedCompany] || [];
+
+  // 컬럼 필터는 여기서 들고 있다 — 출력은 화면에 보이는 줄(필터 결과)만 찍는다.
+  // 거래처를 바꾸면 필터는 저절로 비워진다.
+  const [itemFilters, setItemFilters] = useItemFilters(selectedCompany);
+  const itemsFiltered = isFilterActive(itemFilters);
+  const printItems = itemsFiltered
+    ? filterItems(currentItems, itemFilters).map((r) => r.item)
+    : currentItems;
+
+  const handlePrint = () => {
+    const opened = openPrintPreview(printRef.current, {
+      title: `거래명세서_${selectedCompany}_${currentDate.replace(/\//g, '')}`,
+      note: itemsFiltered ? `필터 적용 — ${currentItems.length}줄 중 ${printItems.length}줄만 출력` : '',
+    });
+    if (!opened) alert('미리보기 창이 브라우저에 의해 차단되었습니다. 주소창의 팝업 차단을 허용한 뒤 다시 눌러주세요.');
+  };
 
 
   const setCurrentItems = (items) => {
@@ -370,7 +387,10 @@ function NewTransaction() {
               <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                 <button className="btn" onClick={addItem}><Plus size={16} /> 줄 추가</button>
                 <button className="btn" onClick={handleSave}><Save size={16} /> 이 회사만 저장</button>
-                <button className="btn btn-primary" onClick={handlePrint}><Printer size={16} /> 출력/PDF</button>
+                <button className="btn btn-primary" onClick={handlePrint}
+                  title="새 창에서 미리보기 (필터가 걸려 있으면 보이는 줄만 출력)">
+                  <Printer size={16} /> 출력/PDF{itemsFiltered ? ` (${printItems.length}줄)` : ''}
+                </button>
               </div>
             </div>
 
@@ -387,6 +407,8 @@ function NewTransaction() {
               onItemsChange={setCurrentItems}
               onDeleteItem={deleteItem}
               dateColWidth="76px"
+              filters={itemFilters}
+              onFiltersChange={setItemFilters}
             />
           </div>
         </div>
@@ -395,7 +417,7 @@ function NewTransaction() {
       <div style={{ position: 'fixed', top: 0, left: '-10000px', opacity: 0, pointerEvents: 'none' }}>
         <TransactionPrintTemplate
           ref={printRef} 
-          data={currentItems} 
+          data={printItems} 
           supplier={printSupplier}
           receiver={receiver} 
           date={currentDate} 

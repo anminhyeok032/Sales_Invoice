@@ -16,6 +16,15 @@ export function computeTotals(items) {
   return { supply, tax, total: supply + tax };
 }
 
+// index 자리에 빈 줄을 하나 끼워 넣은 새 배열. index가 0이면 맨 위, items.length면 맨 끝.
+// 합쳐진 항목이 있어도 최상위 목록 기준이라 그룹 통째로 앞/뒤에 들어간다(그룹 안으로는 안 들어감).
+export function insertItemAt(items, index) {
+  const at = Math.max(0, Math.min(index, items.length));
+  const next = [...items];
+  next.splice(at, 0, createEmptyItem());
+  return next;
+}
+
 export function applyItemChange(items, index, field, value) {
   const newItems = [...items];
   newItems[index] = { ...newItems[index], [field]: value };

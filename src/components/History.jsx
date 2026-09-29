@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import useStore, { resolveSupplier } from '../store';
-import { useReactToPrint } from 'react-to-print';
+import { openPrintPreview } from '../lib/printPreview';
+import { useItemFilters } from '../hooks/useItemFilters';
+import { filterItems, isFilterActive } from '../lib/itemTableView';
 import TransactionPrintTemplate from './TransactionPrintTemplate';
 import { Printer, Trash2, Plus, Save, Link2, Unlink, DatabaseBackup } from 'lucide-react';
 import {
@@ -251,10 +253,23 @@ function History() {
     }
   };
 
-  const handlePrint = useReactToPrint({
-    contentRef: printRef,
-    documentTitle: selectedTx ? `거래명세서_${selectedTx.companyName}_${selectedTx.year}년${selectedTx.month}월` : '명세서',
-  });
+  // 컬럼 필터는 여기서 들고 있다 — 출력은 화면에 보이는 줄(필터 결과)만 찍는다.
+  // 다른 명세서를 고르면 필터는 저절로 비워진다.
+  const [itemFilters, setItemFilters] = useItemFilters(selectedTx?.id);
+  const itemsFiltered = isFilterActive(itemFilters);
+  const allItems = selectedTx?.items;
+  const printItems = !allItems ? [] : (itemsFiltered
+    ? filterItems(allItems, itemFilters).map((r) => r.item)
+    : allItems);
+
+  const handlePrint = () => {
+    if (!selectedTx) return;
+    const opened = openPrintPreview(printRef.current, {
+      title: `거래명세서_${selectedTx.companyName}_${selectedTx.year}년${selectedTx.month}월`,
+      note: itemsFiltered ? `필터 적용 — ${allItems.length}줄 중 ${printItems.length}줄만 출력` : '',
+    });
+    if (!opened) alert('미리보기 창이 브라우저에 의해 차단되었습니다. 주소창의 팝업 차단을 허용한 뒤 다시 눌러주세요.');
+  };
 
 
   const setItems = (items) => {
@@ -466,8 +481,9 @@ function History() {
             <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
               <button className="btn" onClick={addItem} disabled={!selectedTx}><Plus size={16} /> 줄 추가</button>
               <button className="btn" onClick={handleSave} disabled={!selectedTx}><Save size={16} /> 변경사항 저장</button>
-              <button className="btn btn-primary" onClick={handlePrint} disabled={!selectedTx}>
-                <Printer size={16} /> 출력/PDF
+              <button className="btn btn-primary" onClick={handlePrint} disabled={!selectedTx}
+                title="새 창에서 미리보기 (필터가 걸려 있으면 보이는 줄만 출력)">
+                <Printer size={16} /> 출력/PDF{itemsFiltered ? ` (${printItems.length}줄)` : ''}
               </button>
             </div>
           </div>
@@ -506,6 +522,8 @@ function History() {
                 onItemsChange={setItems}
                 onDeleteItem={deleteItem}
                 dateColWidth="52px"
+                filters={itemFilters}
+                onFiltersChange={setItemFilters}
               />
             </>
           ) : (
@@ -534,7 +552,7 @@ function History() {
         <div style={{ position: 'fixed', top: 0, left: '-10000px', opacity: 0, pointerEvents: 'none' }}>
           <TransactionPrintTemplate
             ref={printRef}
-            data={selectedTx.items}
+            data={printItems}
             supplier={printSupplier}
             receiver={printReceiver}
             date={selectedTx.date}

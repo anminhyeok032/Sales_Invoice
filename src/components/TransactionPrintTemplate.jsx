@@ -63,8 +63,11 @@ function formatStatementDate(date) {
 // 둘을 합친 7칸 격자를 두고 colSpan으로 맞춘다:
 //   [세로제목, 항목명, a, b, c, d, e]
 //   상호 = a+b, 대표 = c+d, 값 = e        업태 = a, 종목 = b+c, 값 = d+e
+// 폭은 mm가 아니라 %로 준다. 굵은 테두리(양쪽 0.8mm)를 뺀 안쪽 폭은 188.4mm라서, 합이 190mm가 되게
+// mm로 고정하면 표가 테두리 오른쪽으로 1.6mm 튀어나온다. 비율만 스캔에서 잰 값을 따른다.
 const HALF_COLS_MM = [7.7, 14.5, 29.9, 6.0, 4.5, 6.1, 26.3];
 const INFO_COLS_MM = [...HALF_COLS_MM, ...HALF_COLS_MM];
+const INFO_TOTAL_MM = INFO_COLS_MM.reduce((sum, w) => sum + w, 0);
 // 품목 칸: 날짜 품목 규격 단위 수량 단가 공급가액 세액 비고 (%)
 const ITEM_COLS = [6.89, 26.10, 17.01, 3.96, 7.62, 9.53, 11.73, 9.38, 7.77];
 // 합계 줄: 미수금 (값) 금액 (값) 세액 (값) 합계 (값) 인수자·(인) (%)
@@ -157,7 +160,7 @@ const TransactionPrintTemplate = React.forwardRef(({ data, receiver, supplier, d
 
         <div className="statement-frame">
           <table className="st-info">
-            <colgroup>{INFO_COLS_MM.map((w, i) => <col key={i} style={{ width: `${w}mm` }} />)}</colgroup>
+            <colgroup>{INFO_COLS_MM.map((w, i) => <col key={i} style={{ width: `${(w / INFO_TOTAL_MM) * 100}%` }} />)}</colgroup>
             <tbody>
               <tr className="st-row-regno">
                 <th rowSpan="4" className="st-vertical">공급자</th>
