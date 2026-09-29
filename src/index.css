@@ -161,33 +161,181 @@ body {
 }
 
 /* 명세서 품목 편집표.
-   세로로 긴 화면에서는 폭이 모자라 칸이 짓눌리고 품목 이름이 줄바꿈되므로,
-   줄 간격은 좁히되 각 칸에는 최소 폭을 줘서 글자가 접히지 않게 한다.
-   표가 화면보다 넓어지면 .data-table-container 안에서 가로로 스크롤된다. */
+   세로로 긴 화면(폭 약 700px)에서 가로 스크롤 없이 모든 칸이 보이도록 표 폭에 맞춰
+   칸을 나눈다(table-layout: fixed). 칸 폭은 TransactionItemsTable의 COL_WIDTH.
+   폭이 이보다 더 좁은 화면(휴대폰)에서만 표 안에서 가로 스크롤이 생긴다. */
 .data-table--compact {
-  min-width: 1320px;
+  table-layout: fixed;
+  min-width: 600px;
+  font-size: 0.8125rem;
 }
 
 .data-table--compact th, .data-table--compact td {
-  padding: 0.25rem 0.35rem;
+  padding: 0.2rem 0.2rem;
   white-space: nowrap;
+  overflow: hidden;
 }
 
 .data-table--compact th {
   vertical-align: bottom;
-  line-height: 1.25;
+  line-height: 1.2;
+  padding: 0.25rem 0.2rem;
 }
 
 .data-table--compact .input-field {
-  padding: 0.25rem 0.4rem;
+  padding: 0.2rem 0.3rem;
+  font-size: 0.8125rem;
   line-height: 1.35;
 }
 
-/* 품목 / 규격은 글자가 길다. 나머지 칸은 헤더에서 폭을 고정하고 이 둘이 남는
-   폭을 나눠 갖되, 아래 최소 폭 밑으로는 줄어들지 않는다. */
-/* 실제 데이터에서 가장 긴 값(품목 233px, 규격 136px)이 잘리지 않는 폭. */
-.data-table--compact .col-name { min-width: 280px; }
-.data-table--compact .col-spec { min-width: 180px; }
+/* 수량은 한두 자리라 칸이 좁다. 숫자 입력칸의 위/아래 화살표가 자리를 먹지 않게 숨긴다. */
+.data-table--compact input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+.data-table--compact input[type='number']::-webkit-inner-spin-button,
+.data-table--compact input[type='number']::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* 컬럼 제목 = 정렬/필터 단추 */
+.th-filter {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 1px;
+  width: 100%;
+  padding: 1px 2px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.th-filter:hover {
+  background-color: #e2e8f0;
+}
+.th-filter svg {
+  flex-shrink: 0;
+  margin-bottom: 2px;
+  color: #94a3b8;
+}
+
+/* 공급자 / 공급받는자 — 기존 프로그램 화면처럼 좌(공급자, 빨강) 우(공급받는자, 파랑)로 나란히.
+   칸 배치: No / 상호·대표 / 주소 / 업태·업종. 폭이 아주 좁을 때(휴대폰)만 위아래로. */
+.parties-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.75rem;
+}
+@media (max-width: 620px) {
+  .parties-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+.party-panel {
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 0.5rem 0.6rem 0.3rem;
+  background-color: var(--surface-color);
+}
+.party-panel--supplier { border-top: 3px solid #dc2626; }
+.party-panel--receiver { border-top: 3px solid #2563eb; }
+
+.party-panel__head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 24px;
+  margin-bottom: 0.3rem;
+}
+.party-panel__title { font-weight: 700; font-size: 0.875rem; }
+.party-panel--supplier .party-panel__title { color: #dc2626; }
+.party-panel--receiver .party-panel__title { color: #2563eb; }
+.party-panel__stamp {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid #fca5a5;
+  border-radius: 50%;
+  overflow: hidden;
+  font-size: 0.625rem;
+  color: #dc2626;
+}
+.party-panel__stamp img { width: 100%; height: 100%; object-fit: contain; }
+.party-panel__reset {
+  margin-left: auto;
+  padding: 0.1rem 0.4rem;
+  font-size: 0.75rem;
+  gap: 0.25rem;
+}
+
+.party-panel .input-field {
+  padding: 0.2rem 0.35rem;
+  font-size: 0.8125rem;
+}
+.party-panel .input-field[readonly] { background-color: #f8fafc; }
+
+.party-row {
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr);
+  align-items: center;
+  gap: 0.25rem;
+  margin-bottom: 0.25rem;
+}
+.party-row--pair {
+  grid-template-columns: 2rem minmax(0, 1fr) 2rem minmax(0, 0.65fr);
+}
+.party-row__label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.party-row__field { min-width: 0; }
+
+/* 이 명세서에서만 고친 칸 */
+.party-edited {
+  border-color: #f59e0b !important;
+  background-color: #fffbeb !important;
+}
+
+/* 거래 내역 합계 — 기존 프로그램 화면 아래의 계 / 세액 / 합계금액 줄 */
+.item-totals {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.4rem 1rem;
+  margin-top: 0.5rem;
+  padding: 0.45rem 0.75rem;
+  border-radius: 6px;
+  background-color: #dbeafe;
+  font-size: 0.875rem;
+}
+.item-totals__cell { display: flex; align-items: center; gap: 0.4rem; }
+.item-totals__label { font-weight: 600; color: #1e3a8a; }
+.item-totals__value {
+  min-width: 7.5rem;
+  padding: 0.15rem 0.5rem;
+  border: 1px solid #93c5fd;
+  border-radius: 4px;
+  background-color: #fff;
+  text-align: right;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.item-totals__btn {
+  padding: 0.1rem 0.45rem;
+  font-size: 0.75rem;
+}
+.item-totals__cell--total .item-totals__value {
+  background-color: #cffafe;
+  border-color: #22d3ee;
+}
 
 /* 거래처 목록도 같은 이유로 최소 폭을 준다. 폭이 모자라면 칸이 짓눌려
    사업자번호나 주소가 잘려 보인다. */

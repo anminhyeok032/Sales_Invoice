@@ -8,7 +8,8 @@ import { RotateCcw } from 'lucide-react';
 // excelName: 엑셀(또는 저장된 명세서)에 적힌 이름
 // onChoose(id): id는 거래처 id, ''는 "목록에 없는 회사로 처리"
 // onAuto: 직접 고른 것을 풀고 자동 찾기로 되돌림 (없으면 버튼을 숨긴다)
-function ReceiverSelect({ companies, excelName, match, onChoose, onAuto }) {
+// compact: 공급받는자 칸 안에 들어가는 작은 모양(제목 없이 칸 폭에 맞춤, 안내 문구 작게).
+function ReceiverSelect({ companies, excelName, match, onChoose, onAuto, compact = false }) {
   const value = match.company?.id ?? '';
   const suggested = new Set(match.suggestions.map((s) => s.company.id));
   const others = companies
@@ -26,11 +27,12 @@ function ReceiverSelect({ companies, excelName, match, onChoose, onAuto }) {
   }[match.how];
 
   return (
-    <div style={{ marginBottom: '0.75rem' }}>
-      <div style={{ display: 'flex', alignItems: 'flex-end', gap: '0.5rem', flexWrap: 'wrap' }}>
-        <div className="input-group" style={{ width: '320px', maxWidth: '100%', marginBottom: 0 }}>
-          <label className="input-label">공급받는자 (거래처)</label>
-          <select className="input-field" value={value} onChange={(e) => onChoose(e.target.value)}>
+    <div style={{ marginBottom: compact ? '0.375rem' : '0.75rem' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: '0.375rem', flexWrap: compact ? 'nowrap' : 'wrap' }}>
+        <div className="input-group" style={compact ? { flex: 1, minWidth: 0, marginBottom: 0 } : { width: '320px', maxWidth: '100%', marginBottom: 0 }}>
+          {!compact && <label className="input-label">공급받는자 (거래처)</label>}
+          <select className="input-field" value={value} onChange={(e) => onChoose(e.target.value)}
+            title="출력할 공급받는자(거래처) 고르기">
             <option value="">— 거래처 목록에 없는 회사로 처리 —</option>
             {match.suggestions.length > 0 && (
               <optgroup label="이름이 비슷한 거래처">
@@ -47,13 +49,14 @@ function ReceiverSelect({ companies, excelName, match, onChoose, onAuto }) {
           </select>
         </div>
         {match.how === 'alias' && onAuto && (
-          <button className="btn" style={{ padding: '0.4rem 0.625rem', fontSize: '0.8125rem' }} onClick={onAuto}>
-            <RotateCcw size={14} /> 자동 찾기로 되돌리기
+          <button className="btn" style={{ padding: compact ? '0.3rem 0.4rem' : '0.4rem 0.625rem', fontSize: '0.75rem', flexShrink: 0 }}
+            onClick={onAuto} title="직접 고른 것을 풀고 이름 비교로 다시 찾기">
+            <RotateCcw size={12} /> {compact ? '자동' : '자동 찾기로 되돌리기'}
           </button>
         )}
       </div>
       {note && (
-        <p style={{ margin: '0.375rem 0 0', fontSize: '0.8125rem', color: note.color }}>
+        <p style={{ margin: '0.25rem 0 0', fontSize: compact ? '0.6875rem' : '0.8125rem', lineHeight: 1.35, color: note.color }}>
           엑셀 이름 <strong>{excelName}</strong> · {note.text}
         </p>
       )}

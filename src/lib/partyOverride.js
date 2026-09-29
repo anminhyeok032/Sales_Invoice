@@ -4,16 +4,6 @@
 // 바꾼 칸만 들고 있어야, 나중에 원본의 다른 칸(예: 주소)을 고쳤을 때 그 명세서에도
 // 반영된다. 전체를 복사해 두면 원본을 고쳐도 옛날 값에 묶여 버린다.
 
-// 인쇄 양식(TransactionPrintTemplate)에 찍히는 칸들.
-export const PARTY_FIELDS = [
-  { key: 'regNo', label: '등록번호' },
-  { key: 'name', label: '상호' },
-  { key: 'president', label: '대표자' },
-  { key: 'businessType', label: '업태' },
-  { key: 'businessItem', label: '종목' },
-  { key: 'address', label: '주소', wide: true },
-];
-
 export function applyOverride(base, patch) {
   return patch && Object.keys(patch).length ? { ...base, ...patch } : base;
 }

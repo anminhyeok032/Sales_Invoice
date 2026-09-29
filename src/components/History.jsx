@@ -16,9 +16,8 @@ import { parseLegacyImportFile, summarizeImport, mergeCompanies } from '../lib/l
 import { toDateKey, isWithinRange } from '../lib/dateRange';
 import TransactionItemsTable from './TransactionItemsTable';
 import CollapsibleCard from './CollapsibleCard';
-import SupplierSelect from './SupplierSelect';
 import { applyOverride, patchFor } from '../lib/partyOverride';
-import ReceiverSelect from './ReceiverSelect';
+import { PartiesPanel } from './StatementPartiesCard';
 
 // 한 번에 그리는 최대 줄 수. 가져온 내역이 수천 건이라 전부 그리면 목록이 버벅인다.
 const VISIBLE_LIMIT = 200;
@@ -47,10 +46,9 @@ function History() {
     if (selectedTx.receiverId === '') return { ...auto, company: null, how: 'saved', ambiguous: false };
     return auto;
   }, [selectedTx, companies, receiverAliases]);
-  const printReceiver = selectedTx && applyOverride(
-    receiverInfo(receiverMatch.company, selectedTx.companyName),
-    patchFor(selectedTx.receiverOverride, receiverMatch.company?.id ?? ''),
-  );
+  const receiverBase = selectedTx && receiverInfo(receiverMatch.company, selectedTx.companyName);
+  const receiverPatch = selectedTx && patchFor(selectedTx.receiverOverride, receiverMatch.company?.id ?? '');
+  const printReceiver = selectedTx && applyOverride(receiverBase, receiverPatch);
   const printRef = useRef();
   const importInputRef = useRef();
   const [importError, setImportError] = useState('');
@@ -378,33 +376,38 @@ function History() {
 
           {selectedTx ? (
             <>
-              <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: '0.75rem' }}>
-                <div className="input-group" style={{ width: '150px', marginBottom: 0 }}>
-                  <label className="input-label">출력용 작성일자</label>
-                  <input
-                    className="input-field"
-                    value={selectedTx.date}
-                    onChange={e => setSelectedTx({ ...selectedTx, date: e.target.value })}
-                  />
-                </div>
-                <SupplierSelect
-                  value={supplier.id}
-                  onChange={(id) => setSelectedTx({ ...selectedTx, supplierId: id })}
+              <div className="input-group" style={{ width: '150px', marginBottom: '0.5rem' }}>
+                <label className="input-label">출력용 작성일자</label>
+                <input
+                  className="input-field"
+                  value={selectedTx.date}
+                  onChange={e => setSelectedTx({ ...selectedTx, date: e.target.value })}
                 />
               </div>
-              <ReceiverSelect
-                companies={companies}
-                excelName={selectedTx.companyName}
-                match={receiverMatch}
-                onChoose={(id) => setSelectedTx({ ...selectedTx, receiverId: id })}
-              />
+
+              {/* 칸 내용은 자동 작성에서만 고친다. 여기서는 누구로 찍을지만 고른다. */}
+              <div style={{ marginBottom: '0.75rem' }}>
+                <PartiesPanel
+                  readOnly
+                  supplierBase={supplier}
+                  supplierPatch={selectedTx.supplierOverride?.[supplier.id]}
+                  supplierId={supplier.id}
+                  onSupplierChange={(id) => setSelectedTx({ ...selectedTx, supplierId: id })}
+                  receiverBase={receiverBase}
+                  receiverPatch={receiverPatch}
+                  companies={companies}
+                  excelName={selectedTx.companyName}
+                  receiverMatch={receiverMatch}
+                  onReceiverChoose={(id) => setSelectedTx({ ...selectedTx, receiverId: id })}
+                />
+              </div>
 
               <TransactionItemsTable
                 items={selectedTx.items}
                 onItemChange={handleItemChange}
                 onItemsChange={setItems}
                 onDeleteItem={deleteItem}
-                dateColWidth="80px"
+                dateColWidth="52px"
               />
             </>
           ) : (

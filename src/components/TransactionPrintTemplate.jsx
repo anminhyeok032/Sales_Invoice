@@ -1,4 +1,5 @@
 import React, { useLayoutEffect, useRef, useState } from 'react';
+import { PRINT_ROWS_PER_PAGE } from '../lib/transactionItems';
 
 // Shrinks font-size so text stays on one line within its cell instead of wrapping or being clipped.
 function FitText({ children, maxFontSize = 11, minFontSize = 6 }) {
@@ -38,7 +39,7 @@ function FitText({ children, maxFontSize = 11, minFontSize = 6 }) {
 
 // The TransactionPrintTemplate component represents the A4 printable area.
 const TransactionPrintTemplate = React.forwardRef(({ data, receiver, supplier, date }, ref) => {
-  const MAX_ROWS = 10;
+  const MAX_ROWS = PRINT_ROWS_PER_PAGE;
   const items = data || [];
   
   const dailyInfo = {};

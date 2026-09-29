@@ -4,17 +4,34 @@ export function createEmptyItem() {
   return { date: '', name: '', spec: '', unit: 'EA', qty: 0, price: 0, supply: 0, tax: 0, note: '', newOrMod: '', processingTime: '' };
 }
 
+// 인쇄 양식은 한 장에 10줄씩 찍는다. 넘치면 여러 장이 되고 장마다 그 장의 합계가 찍힌다.
+export const PRINT_ROWS_PER_PAGE = 10;
+
+// 인쇄 양식과 같은 계산: 금액 = Σ공급가액, 세액 = Σ세액, 합계 = 금액 + 세액.
+// 합쳐진 항목은 대표 행(원본 합계)만 세므로 인쇄되는 줄과 같다.
+export function computeTotals(items) {
+  const supply = items.reduce((sum, item) => sum + (Number(item.supply) || 0), 0);
+  const tax = items.reduce((sum, item) => sum + (Number(item.tax) || 0), 0);
+  return { supply, tax, total: supply + tax };
+}
+
 export function applyItemChange(items, index, field, value) {
   const newItems = [...items];
   newItems[index] = { ...newItems[index], [field]: value };
 
+  // 수량/단가가 바뀌면 공급가액만 다시 계산한다. 세액은 건드리지 않는다 —
+  // 기존 명세서 중 세액이 있었던 건 0.5%도 안 돼서, 사용자가 직접 넣을 때만 들어간다.
   if (field === 'price' || field === 'qty') {
     const q = Number(newItems[index].qty) || 0;
     const p = Number(newItems[index].price) || 0;
     newItems[index].supply = q * p;
-    newItems[index].tax = Math.floor(newItems[index].supply * 0.1);
   }
   return newItems;
+}
+
+// 모든 줄의 세액을 0으로. (예전 버전이 자동으로 넣어 둔 10% 세액을 한 번에 지울 때)
+export function clearTaxes(items) {
+  return items.map((item) => (Number(item.tax) ? { ...item, tax: 0 } : item));
 }
 
 export function reorderItems(items, fromIndex, toIndex) {

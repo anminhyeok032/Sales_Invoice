@@ -386,7 +386,7 @@ function NewTransaction() {
               onItemChange={handleItemChange}
               onItemsChange={setCurrentItems}
               onDeleteItem={deleteItem}
-              dateColWidth="110px"
+              dateColWidth="76px"
             />
           </div>
         </div>

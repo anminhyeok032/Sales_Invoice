@@ -5,16 +5,20 @@
 //            보기만 바꾸면 정렬한 대로 인쇄되지 않아 쓸모가 없다.
 //   · 필터 — 보기에서 숨기기만 한다. 엑셀과 같고, 숨긴 항목도 저장/출력에는 그대로 나간다.
 
+// 세로 화면에서 가로 스크롤 없이 다 보이도록 제목은 짧게, 긴 설명은 hint(툴팁)로.
+// 단위는 편집표에서 뺐다(항상 EA라 자리만 차지했다). 값은 그대로 두고 인쇄에는 나간다.
+// 순서는 기존 프로그램 화면처럼 품목 바로 옆에 규격.
+// 세액(optional)은 거의 쓰지 않아서 평소에는 숨기고, 입력할 때나 값이 있을 때만 보인다.
 export const ITEM_COLUMNS = [
   { key: 'date', label: ['날짜'] },
-  { key: 'name', label: ['품목 (조합됨)'] },
-  { key: 'newOrMod', label: ['구분', '(신작/수정/자사불)'] },
-  { key: 'unit', label: ['단위'] },
+  { key: 'name', label: ['품목'], hint: '품목 (조합됨)' },
+  { key: 'spec', label: ['규격'], hint: '규격 (비고)' },
+  { key: 'newOrMod', label: ['구분'], hint: '구분 (신작/수정/자사불량) — 확인용, 인쇄 안 됨' },
   { key: 'qty', label: ['수량'], numeric: true },
-  { key: 'processingTime', label: ['가공시간', '(확인용)'] },
-  { key: 'spec', label: ['규격 (비고)'] },
-  { key: 'price', label: ['단가 (입력)'], numeric: true },
-  { key: 'supply', label: ['공급가액'], numeric: true },
+  { key: 'processingTime', label: ['가공', '시간'], hint: '가공시간 — 확인용, 인쇄 안 됨' },
+  { key: 'price', label: ['단가'], numeric: true, hint: '단가 (입력)' },
+  { key: 'supply', label: ['공급', '가액'], numeric: true, hint: '공급가액' },
+  { key: 'tax', label: ['세액'], numeric: true, hint: '세액 (직접 입력)', optional: true },
 ];
 
 export const EMPTY_LABEL = '(비어 있음)';
