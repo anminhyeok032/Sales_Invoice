@@ -4,8 +4,9 @@ export function createEmptyItem() {
   return { date: '', name: '', spec: '', unit: 'EA', qty: 0, price: 0, supply: 0, tax: 0, note: '', newOrMod: '', processingTime: '' };
 }
 
-// 인쇄 양식은 한 장에 10줄씩 찍는다. 넘치면 여러 장이 되고 장마다 그 장의 합계가 찍힌다.
-export const PRINT_ROWS_PER_PAGE = 10;
+// 인쇄 양식은 한 장에 12줄씩 찍는다(기존 프로그램 양식과 같은 줄 수). 넘치면 여러 장이 되고
+// 장마다 그 장의 합계가 찍힌다.
+export const PRINT_ROWS_PER_PAGE = 12;
 
 // 인쇄 양식과 같은 계산: 금액 = Σ공급가액, 세액 = Σ세액, 합계 = 금액 + 세액.
 // 합쳐진 항목은 대표 행(원본 합계)만 세므로 인쇄되는 줄과 같다.

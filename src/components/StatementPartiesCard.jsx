@@ -3,6 +3,7 @@ import CollapsibleCard from './CollapsibleCard';
 import SupplierSelect from './SupplierSelect';
 import ReceiverSelect from './ReceiverSelect';
 import { setOverrideField } from '../lib/partyOverride';
+import { useTransparentStamp } from '../lib/stampImage';
 
 // 기존 프로그램 화면처럼 공급자(왼쪽, 빨강) / 공급받는자(오른쪽, 파랑)를 한 줄에 나란히.
 // 칸 배치도 그 화면을 따른다:  No / 상호·대표 / 주소 / 업태·업종
@@ -15,6 +16,7 @@ const ROWS = [
 
 function PartyPanel({ side, base, patch, onPatch, readOnly, selector, stamp }) {
   const edited = patch ? Object.keys(patch).length : 0;
+  const stampSrc = useTransparentStamp(stamp || '');
 
   const field = (f) => {
     const isEdited = Boolean(patch && f.key in patch);
@@ -35,7 +37,7 @@ function PartyPanel({ side, base, patch, onPatch, readOnly, selector, stamp }) {
         <span className="party-panel__title">{side === 'supplier' ? '[공 급 자]' : '[공급받는자]'}</span>
         {stamp !== undefined && (
           <span className="party-panel__stamp" title="도장은 거래처 정보 관리에서 바꿉니다">
-            {stamp ? <img src={stamp} alt="도장" /> : '인'}
+            {stampSrc ? <img src={stampSrc} alt="도장" /> : '인'}
           </span>
         )}
         {!readOnly && edited > 0 && (

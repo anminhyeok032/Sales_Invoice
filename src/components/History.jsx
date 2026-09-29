@@ -10,7 +10,7 @@ import {
   disconnectBackupFile,
   writeTransactionsBackup,
 } from '../lib/transactionExcelSync';
-import { applyItemChange, createEmptyItem } from '../lib/transactionItems';
+import { applyItemChange, createEmptyItem, computeTotals } from '../lib/transactionItems';
 import { matchReceiver, receiverInfo } from '../lib/companyLookup';
 import { parseLegacyImportFile, summarizeImport, mergeCompanies } from '../lib/legacyImport';
 import { toDateKey, isWithinRange } from '../lib/dateRange';
@@ -20,7 +20,25 @@ import { applyOverride, patchFor } from '../lib/partyOverride';
 import { PartiesPanel } from './StatementPartiesCard';
 
 // 한 번에 그리는 최대 줄 수. 가져온 내역이 수천 건이라 전부 그리면 목록이 버벅인다.
-const VISIBLE_LIMIT = 200;
+const VISIBLE_LIMIT = 500;
+
+const pad2 = (n) => String(n).padStart(2, '0');
+const won = (n) => n.toLocaleString();
+const fmtDate = (key, raw) => (key ? `${key.slice(0, 4)}.${key.slice(4, 6)}.${key.slice(6, 8)}` : (raw || ''));
+
+// 기간 칸이 정확히 한 해(quarter 0)나 한 분기이면 그 값. 비어 있으면 전체. 그 밖에는 null(직접 입력).
+function periodOf(fromKey, toKey) {
+  if (!fromKey && !toKey) return { year: '', quarter: 0 };
+  if (!fromKey || !toKey || fromKey.slice(0, 4) !== toKey.slice(0, 4)) return null;
+  const year = fromKey.slice(0, 4);
+  const md = `${fromKey.slice(4)}-${toKey.slice(4)}`;
+  if (md === '0101-1231') return { year, quarter: 0 };
+  for (let q = 1; q <= 4; q += 1) {
+    const last = new Date(Number(year), q * 3, 0).getDate();
+    if (md === `${pad2(q * 3 - 2)}01-${pad2(q * 3)}${pad2(last)}`) return { year, quarter: q };
+  }
+  return null;
+}
 
 function History() {
   const {
@@ -56,13 +74,43 @@ function History() {
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [companyFilter, setCompanyFilter] = useState('');
+  const [sortKey, setSortKey] = useState('date');   // date | name | amount
+  const [sortDesc, setSortDesc] = useState(true);
+
+  // 목록 한 줄에 보여줄 값. 기존 프로그램 목록처럼 작성일자 / 내용 / 상호명 / 금액 / 세액 / 합계.
+  //  - 상호명: 엑셀 이름('가나')이 아니라 실제로 인쇄되는 공급받는자 상호
+  //  - 내용: 첫 품목 + '외 N종' (기존 프로그램이 만들던 방식)
+  // 목록 전체(수천 건)를 도는 계산이라, 이름 비교(fuzzy)는 하지 않고 id/별칭/이름 일치만 본다.
+  const rows = useMemo(() => {
+    const byId = new Map(companies.map((c) => [c.id, c]));
+    return transactions.map((tx) => {
+      const company = byId.get(tx.receiverId) || byId.get(receiverAliases[tx.companyName])
+        || companies.find((c) => c.name === tx.companyName);
+      const override = patchFor(tx.receiverOverride, company?.id ?? '');
+      const named = (tx.items || []).filter((i) => String(i.name || '').trim());
+      const totals = computeTotals(tx.items || []);
+      // 기존 DB에는 상호 앞에 공백이 붙은 것('  천 일 정 공 (주)')이 있다. 화면에서는 안 보이지만
+      // 정렬하면 맨 앞으로 튀어나오므로, 앞뒤 공백은 떼고 정렬할 때는 공백을 모두 무시한다.
+      const name = String(override?.name || company?.name || tx.companyName || '').trim();
+      return {
+        tx,
+        dateKey: toDateKey(tx.date),
+        name,
+        sortName: name.replace(/\s+/g, ''),
+        summary: named.length ? `${named[0].name.trim()}${named.length > 1 ? ` 외 ${named.length - 1}종` : ''}` : '',
+        ...totals,
+      };
+    });
+  }, [transactions, companies, receiverAliases]);
 
   // 조회 대상 거래처는 저장된 내역에 실제로 있는 상호만 보여준다.
-  // (거래처 정보 관리에는 있지만 명세서가 한 건도 없는 곳은 고를 이유가 없다.)
   const companyOptions = useMemo(
-    () => [...new Set(transactions.map((t) => t.companyName).filter(Boolean))]
-      .sort((a, b) => a.localeCompare(b)),
-    [transactions]
+    () => [...new Set(rows.map((r) => r.name).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko')),
+    [rows]
+  );
+  const yearOptions = useMemo(
+    () => [...new Set(rows.map((r) => r.dateKey.slice(0, 4)).filter(Boolean))].sort().reverse(),
+    [rows]
   );
 
   const fromKey = toDateKey(fromDate);
@@ -70,12 +118,35 @@ function History() {
   const filterActive = Boolean(fromKey || toKey || companyFilter);
 
   const filtered = useMemo(() => {
-    return transactions
-      .filter((t) => (companyFilter ? t.companyName === companyFilter : true))
-      .filter((t) => isWithinRange(t.date, fromKey, toKey))
-      .sort((a, b) => (toDateKey(b.date) || '').localeCompare(toDateKey(a.date) || '')
-        || (a.companyName || '').localeCompare(b.companyName || ''));
-  }, [transactions, companyFilter, fromKey, toKey]);
+    const dir = sortDesc ? -1 : 1;
+    const cmp = {
+      date: (a, b) => a.dateKey.localeCompare(b.dateKey),
+      name: (a, b) => a.sortName.localeCompare(b.sortName, 'ko'),
+      amount: (a, b) => a.total - b.total,
+    }[sortKey];
+    return rows
+      .filter((r) => (companyFilter ? r.name === companyFilter : true))
+      .filter((r) => isWithinRange(r.tx.date, fromKey, toKey))
+      .sort((a, b) => dir * cmp(a, b) || dir * a.dateKey.localeCompare(b.dateKey));
+  }, [rows, companyFilter, fromKey, toKey, sortKey, sortDesc]);
+
+  // 아래 고정 줄: 지금 조회된 목록 전체의 매출 합계(화면에 다 그리지 않은 줄까지).
+  const listTotals = useMemo(() => filtered.reduce(
+    (acc, r) => ({ supply: acc.supply + r.supply, tax: acc.tax + r.tax, total: acc.total + r.total }),
+    { supply: 0, tax: 0, total: 0 },
+  ), [filtered]);
+
+  // 연도/분기 빠른 선택. 따로 상태를 두지 않고 기간 칸을 채우기만 한다 —
+  // 기간 칸이 정확히 그 연도/분기이면 그 값으로 보이고, 직접 고친 기간이면 '직접 입력'.
+  const period = periodOf(fromKey, toKey);
+  const setPeriod = (year, quarter) => {
+    if (!year) { setFromDate(''); setToDate(''); return; }
+    const [m1, m2] = quarter ? [quarter * 3 - 2, quarter * 3] : [1, 12];
+    const last = new Date(Number(year), m2, 0).getDate();
+    const yy = year.slice(2);
+    setFromDate(`${yy}.${pad2(m1)}.01`);
+    setToDate(`${yy}.${pad2(m2)}.${pad2(last)}`);
+  };
 
   const resetFilters = () => {
     setFromDate('');
@@ -275,35 +346,57 @@ function History() {
           title="저장된 거래명세서 목록"
           count={transactionsLoaded ? `${transactions.length.toLocaleString()}건` : null}
         >
-          {/* 기존 프로그램에서 가져온 내역까지 합치면 수천 건이 되므로, 목록을
-              통째로 그리지 않고 기간과 거래처로 걸러서 보여준다. */}
+          {/* 기존 프로그램 '거래명세서 발행' 목록 화면을 따른다: 위에 조회 조건, 아래에 촘촘한 목록. */}
           {transactions.length > 0 && (
-            <div style={{ display: 'grid', gap: '0.5rem', marginBottom: '0.75rem', maxWidth: '520px' }}>
-              <div style={{ display: 'flex', gap: '0.375rem', alignItems: 'center' }}>
-                <input
-                  className="input-field"
-                  placeholder="26.01.01"
-                  value={fromDate}
-                  onChange={(e) => setFromDate(e.target.value)}
-                  style={{ flex: 1, minWidth: 0 }}
-                />
-                <span style={{ color: '#64748b' }}>~</span>
-                <input
-                  className="input-field"
-                  placeholder="26.12.31"
-                  value={toDate}
-                  onChange={(e) => setToDate(e.target.value)}
-                  style={{ flex: 1, minWidth: 0 }}
-                />
+            <div className="history-filters">
+              <div className="history-filters__row">
+                <select className="input-field" style={{ width: '6.5rem' }} title="연도"
+                  value={period ? period.year : '__custom'}
+                  onChange={(e) => setPeriod(e.target.value === '__custom' ? '' : e.target.value, 0)}>
+                  <option value="">전체 연도</option>
+                  {yearOptions.map((y) => <option key={y} value={y}>{y}년</option>)}
+                  {!period && <option value="__custom">직접 입력</option>}
+                </select>
+                <select className="input-field" style={{ width: '9.5rem' }} title="분기"
+                  disabled={!period || !period.year}
+                  value={period ? period.quarter : 0}
+                  onChange={(e) => setPeriod(period.year, Number(e.target.value))}>
+                  <option value={0}>전체 분기</option>
+                  {[1, 2, 3, 4].map((q) => (
+                    <option key={q} value={q}>{q}/4 분기 ({pad2(q * 3 - 2)}~{pad2(q * 3)}월)</option>
+                  ))}
+                </select>
+                <span className="history-filters__range">
+                  <input className="input-field" placeholder="26.01.01" value={fromDate}
+                    onChange={(e) => setFromDate(e.target.value)} />
+                  <span>~</span>
+                  <input className="input-field" placeholder="26.12.31" value={toDate}
+                    onChange={(e) => setToDate(e.target.value)} />
+                </span>
               </div>
-              <select
-                className="input-field"
-                value={companyFilter}
-                onChange={(e) => setCompanyFilter(e.target.value)}
-              >
-                <option value="">전체 거래처 ({companyOptions.length}곳)</option>
-                {companyOptions.map((name) => <option key={name} value={name}>{name}</option>)}
-              </select>
+              <div className="history-filters__row">
+                <select className="input-field" style={{ flex: '1 1 12rem', minWidth: 0 }}
+                  value={companyFilter} onChange={(e) => setCompanyFilter(e.target.value)}>
+                  <option value="">전체 거래처 ({companyOptions.length}곳)</option>
+                  {companyOptions.map((name) => <option key={name} value={name}>{name}</option>)}
+                </select>
+                <label className="history-filters__label">정렬</label>
+                <select className="input-field" style={{ width: '6.5rem' }} value={sortKey} onChange={(e) => setSortKey(e.target.value)}>
+                  <option value="date">작성일자</option>
+                  <option value="name">상호명</option>
+                  <option value="amount">금액</option>
+                </select>
+                <label className="history-filters__check">
+                  <input type="checkbox" checked={sortDesc} onChange={(e) => setSortDesc(e.target.checked)} /> 내림차순
+                </label>
+                <strong className="history-filters__count">{filtered.length.toLocaleString()}건</strong>
+                {filterActive && (
+                  <button className="btn" style={{ padding: '0.2rem 0.5rem', fontSize: '0.8125rem' }} onClick={resetFilters}>초기화</button>
+                )}
+              </div>
+              {fromKey && toKey && fromKey > toKey && (
+                <p style={{ margin: 0, fontSize: '0.8125rem', color: '#dc2626' }}>시작일이 종료일보다 뒤입니다.</p>
+              )}
             </div>
           )}
 
@@ -313,48 +406,53 @@ function History() {
             <p style={{ color: 'gray' }}>저장된 내역이 없습니다.</p>
           ) : (
             <>
-              <p style={{ fontSize: '0.8125rem', color: '#64748b', margin: '0 0 0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                <span>
-                  전체 {transactions.length.toLocaleString()}건 중 {filtered.length.toLocaleString()}건
-                  {filtered.length > VISIBLE_LIMIT && ` — 최근 ${VISIBLE_LIMIT}건만 표시합니다. 기간을 좁혀주세요.`}
-                </span>
-                {filterActive && (
-                  <button className="btn" style={{ padding: '0.125rem 0.5rem', fontSize: '0.8125rem' }} onClick={resetFilters}>
-                    조회조건 초기화
-                  </button>
-                )}
-                {fromKey && toKey && fromKey > toKey && (
-                  <span style={{ color: '#dc2626' }}>시작일이 종료일보다 뒤입니다.</span>
-                )}
-              </p>
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>연도/월</th>
-                    <th>거래처명</th>
-                    <th>작성일자</th>
-                    <th>삭제</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filtered.slice(0, VISIBLE_LIMIT).map(tx => (
-                    <tr key={tx.id} style={{ cursor: 'pointer', backgroundColor: selectedTx?.id === tx.id ? '#e0f2fe' : '' }}>
-                      <td onClick={() => setSelectedTx(tx)}>{tx.year}년 {tx.month}월</td>
-                      <td onClick={() => setSelectedTx(tx)}><strong>{tx.companyName}</strong></td>
-                      <td onClick={() => setSelectedTx(tx)}>{tx.date}</td>
-                      <td style={{ textAlign: 'center' }}>
-                        <button className="btn" style={{ padding: '0.25rem', color: 'red' }} onClick={() => {
-                          deleteTransaction(tx.id);
-                          if (selectedTx?.id === tx.id) setSelectedTx(null);
-                          backupNow();
-                        }}>
-                          <Trash2 size={16} />
-                        </button>
-                      </td>
+              <div className="history-list">
+                <table className="data-table history-table">
+                  <thead>
+                    <tr>
+                      <th style={{ width: '5.6rem' }}>작성일자</th>
+                      <th>내용</th>
+                      <th style={{ width: '24%' }}>상호명</th>
+                      <th className="num" style={{ width: '5.6rem' }}>금액</th>
+                      <th className="num" style={{ width: '4.2rem' }}>세액</th>
+                      <th className="num" style={{ width: '5.6rem' }}>합계</th>
+                      <th style={{ width: '2rem' }} title="삭제" />
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {filtered.slice(0, VISIBLE_LIMIT).map((r) => (
+                      <tr key={r.tx.id} onClick={() => setSelectedTx(r.tx)}
+                        className={selectedTx?.id === r.tx.id ? 'is-selected' : undefined}>
+                        <td>{fmtDate(r.dateKey, r.tx.date)}</td>
+                        <td title={r.summary}>{r.summary}</td>
+                        <td title={r.name !== r.tx.companyName ? `엑셀 이름: ${r.tx.companyName}` : r.name}>{r.name}</td>
+                        <td className="num">{won(r.supply)}</td>
+                        <td className="num">{r.tax ? won(r.tax) : ''}</td>
+                        <td className="num">{won(r.total)}</td>
+                        <td style={{ textAlign: 'center', padding: 0 }}>
+                          <button className="btn" title="삭제"
+                            style={{ padding: '2px', color: 'red', border: 'none', background: 'none' }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (!window.confirm(`${fmtDate(r.dateKey, r.tx.date)} ${r.name} 명세서를 삭제할까요?`)) return;
+                              deleteTransaction(r.tx.id);
+                              if (selectedTx?.id === r.tx.id) setSelectedTx(null);
+                              backupNow();
+                            }}>
+                            <Trash2 size={13} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {filtered.length > VISIBLE_LIMIT && (
+                <p style={{ margin: '0.375rem 0 0', fontSize: '0.75rem', color: '#64748b' }}>
+                  {filtered.length.toLocaleString()}건 중 {VISIBLE_LIMIT}건만 표시합니다. 연도·분기나 거래처로 좁혀주세요.
+                  (아래 합계는 조회된 {filtered.length.toLocaleString()}건 전체 기준)
+                </p>
+              )}
             </>
           )}
         </CollapsibleCard>
@@ -417,6 +515,19 @@ function History() {
           )}
         </div>
       </div>
+
+      {/* 기존 프로그램 목록 화면 아래의 '매출' 줄처럼, 화면 아래에 붙어서 지금 조회된 목록 전체의
+          매출 합계를 보여준다. 목록을 아래로 내려도 계속 보인다. */}
+      {transactionsLoaded && transactions.length > 0 && (
+        <div className="history-footer">
+          <span className="history-footer__title">
+            조회 매출 <strong>{filtered.length.toLocaleString()}</strong>건
+          </span>
+          <span className="history-footer__cell">금액 <b>{won(listTotals.supply)}</b></span>
+          <span className="history-footer__cell">세액 <b>{won(listTotals.tax)}</b></span>
+          <span className="history-footer__cell history-footer__cell--total">합계 <b>{won(listTotals.total)}</b></span>
+        </div>
+      )}
 
       {/* Hidden print template */}
       {selectedTx && (

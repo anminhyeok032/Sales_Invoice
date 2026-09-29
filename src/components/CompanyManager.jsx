@@ -11,6 +11,7 @@ import {
   writeCompaniesToHandle,
 } from '../lib/companyExcelSync';
 import CollapsibleCard from './CollapsibleCard';
+import { useTransparentStamp } from '../lib/stampImage';
 
 function CompanyManager() {
   const {
@@ -24,6 +25,7 @@ function CompanyManager() {
   const editing = suppliers.find((s) => s.id === editingId) || suppliers[0];
   const [myCompState, setMyCompState] = useState(editing);
   const supplierDirty = JSON.stringify(myCompState) !== JSON.stringify(editing);
+  const stampPreview = useTransparentStamp(myCompState.stamp);
 
   // --- Excel file sync (거래처 목록 <-> 업체목록.xls) ---
   const fileHandleRef = useRef(null);
@@ -255,7 +257,7 @@ function CompanyManager() {
               backgroundColor: '#f8fafc'
             }}>
               {myCompState.stamp ? (
-                <img src={myCompState.stamp} alt="도장 미리보기" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+                <img src={stampPreview} alt="도장 미리보기" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
               ) : (
                 <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>미등록</span>
               )}

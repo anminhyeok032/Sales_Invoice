@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, GripVertical, Trash2, Unlink, Filter } from 'lucide-react';
 import { useDragReorder } from '../hooks/useDragReorder';
 import ColumnFilterMenu from './ColumnFilterMenu';
@@ -36,7 +36,7 @@ function TransactionItemsTable({ items, onItemChange, onItemsChange, onDeleteIte
 
   // 컬럼별 필터: { [컬럼키]: 체크된 값들 }. 값이 없으면 그 컬럼은 필터 없음.
   const [filters, setFilters] = useState({});
-  const [menu, setMenu] = useState(null);   // { key, rect }
+  const [menu, setMenu] = useState(null);   // { key, anchor: 컬럼 제목 요소 }
 
   // 세액 칸은 평소 숨긴다(거의 안 쓴다). 사용자가 "입력"을 눌렀거나, 이미 세액이 든 줄이
   // 있으면 보인다 — 값이 있는데 칸이 안 보여서 모르고 인쇄하는 일이 없도록.
@@ -55,8 +55,8 @@ function TransactionItemsTable({ items, onItemChange, onItemsChange, onDeleteIte
     return next;
   });
 
-  const openMenu = (key, e) =>
-    setMenu({ key, rect: e.currentTarget.getBoundingClientRect() });
+  // 위치 대신 제목 요소를 넘겨서, 창이 스크롤/크기 변경을 따라 자리를 다시 잡게 한다.
+  const openMenu = (key, e) => setMenu({ key, anchor: e.currentTarget });
 
   const toggleExpand = (mergeId) => {
     setExpandedGroups((prev) => {
@@ -99,30 +99,17 @@ function TransactionItemsTable({ items, onItemChange, onItemsChange, onDeleteIte
     return onItemsChange(moveSourceToGroup(items, source.p, source.i, target.p, target.i));
   };
 
-  const {
-    dragSource,
-    dropTarget,
-    activeHandleKey,
-    setActiveHandleKey,
-    startDrag,
-    overTarget,
-    leaveTarget,
-    dropOnTarget,
-    endDrag,
-  } = useDragReorder(handleDrop);
+  // 끌어서 놓기는 포인터 이벤트로 한다(useDragReorder 설명 참고 — 끄는 동안 휠 스크롤이 된다).
+  // 놓을 수 있는 칸은 data-drop-* 로 표시하고, 이 표 안의 칸만 대상으로 삼는다.
+  const tableRef = useRef(null);
+  const { dragSource, dropTarget, beginDrag, ghostRef, ghostLabel } =
+    useDragReorder(handleDrop, { disabled: filtered, scopeRef: tableRef });
 
   const isDragging = (p, i) => dragSource && dragSource.p === p && dragSource.i === i;
   const isTarget = (kind, p, i) =>
     dropTarget && dropTarget.kind === kind && dropTarget.p === p && dropTarget.i === i;
 
-  const gripCellProps = (handleKey) => ({
-    onMouseEnter: () => setActiveHandleKey(handleKey),
-    onMouseLeave: () => setActiveHandleKey(null),
-  });
-
   const renderSourceRows = (item, parentIndex) => {
-    // 합쳐진 원본 줄은 input이 아니라 글자를 그대로 그린다. 표 전체가 nowrap이라
-    // 칸보다 긴 값은 옆 칸을 침범할 수 있으므로 잘라서 표시한다.
     // 합쳐진 원본 줄은 input이 아니라 글자를 그대로 그린다. 표 전체가 nowrap이라
     // 칸보다 긴 값이 옆 칸을 침범하지 않도록 넘치는 부분은 잘라둔다.
     const cell = {
@@ -131,27 +118,22 @@ function TransactionItemsTable({ items, onItemChange, onItemsChange, onDeleteIte
     };
 
     return item.mergedFrom.map((source, subIndex) => {
-      const handleKey = `s:${parentIndex}:${subIndex}`;
       const targeted = isTarget('sub', parentIndex, subIndex);
 
       return (
         <tr
           key={`${item.mergeId}-src-${subIndex}`}
-          draggable={!filtered && activeHandleKey === handleKey}
-          onDragStart={(e) => startDrag(e, { p: parentIndex, i: subIndex })}
-          onDragEnd={endDrag}
-          onDragOver={(e) => overTarget(e, { kind: 'sub', p: parentIndex, i: subIndex })}
-          onDragLeave={leaveTarget}
-          onDrop={(e) => dropOnTarget(e, { kind: 'sub', p: parentIndex, i: subIndex })}
+          data-drop-kind="sub" data-drop-p={parentIndex} data-drop-i={subIndex}
           style={{
             backgroundColor: targeted ? HIGHLIGHT : '#f8fafc',
             opacity: isDragging(parentIndex, subIndex) ? 0.4 : 1,
           }}
         >
           <td
-            {...gripCellProps(handleKey)}
+            className="drag-handle"
+            onPointerDown={(e) => beginDrag(e, { p: parentIndex, i: subIndex }, source.name)}
             title="드래그: 그룹 안 순서변경 / 병합 밖 행에 놓으면 이 그룹에서 빠짐"
-            style={{ textAlign: 'center', color: '#94a3b8', cursor: 'grab' }}
+            style={{ textAlign: 'center', color: '#94a3b8', cursor: filtered ? 'not-allowed' : 'grab' }}
           >
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '2px' }}>
               <span style={{ color: '#cbd5e1' }}>└</span>
@@ -200,7 +182,7 @@ function TransactionItemsTable({ items, onItemChange, onItemsChange, onDeleteIte
         </div>
       )}
       <div className="data-table-container">
-      <table className="data-table data-table--compact">
+      <table ref={tableRef} className="data-table data-table--compact">
         <thead>
           <tr>
             <th style={{ width: '32px' }} title="이동">이동</th>
@@ -237,17 +219,10 @@ function TransactionItemsTable({ items, onItemChange, onItemsChange, onDeleteIte
           {visibleRows.map(({ item, index }) => {
             const merged = isMergedItem(item);
             const expanded = merged && expandedGroups.has(item.mergeId);
-            const handleKey = `t:${index}`;
-
             return (
               <React.Fragment key={item.mergeId || index}>
                 <tr
-                  draggable={!filtered && activeHandleKey === handleKey}
-                  onDragStart={(e) => startDrag(e, { p: null, i: index })}
-                  onDragEnd={endDrag}
-                  onDragOver={(e) => overTarget(e, { kind: 'row', p: null, i: index })}
-                  onDragLeave={leaveTarget}
-                  onDrop={(e) => dropOnTarget(e, { kind: 'row', p: null, i: index })}
+                  data-drop-kind="row" data-drop-i={index}
                   style={{
                     opacity: isDragging(null, index) ? 0.5 : 1,
                     transition: 'background-color 0.2s',
@@ -258,7 +233,9 @@ function TransactionItemsTable({ items, onItemChange, onItemsChange, onDeleteIte
                   }}
                 >
                   <td
-                    {...gripCellProps(handleKey)}
+                    className="drag-handle"
+                    data-drop-kind="handle" data-drop-i={index}
+                    onPointerDown={(e) => beginDrag(e, { p: null, i: index }, item.name)}
                     title={filtered
                       ? '필터가 걸려 있는 동안에는 순서변경/합치기를 할 수 없습니다'
                       : '드래그: 순서변경 / 다른 행의 이 칸에 놓으면 합치기'}
@@ -269,9 +246,6 @@ function TransactionItemsTable({ items, onItemChange, onItemsChange, onDeleteIte
                       backgroundColor: isTarget('handle', null, index) ? HIGHLIGHT : undefined,
                       outline: isTarget('handle', null, index) ? '2px dashed #2563eb' : 'none',
                     }}
-                    onDragOver={(e) => overTarget(e, { kind: 'handle', p: null, i: index }, 'copy')}
-                    onDragLeave={leaveTarget}
-                    onDrop={(e) => dropOnTarget(e, { kind: 'handle', p: null, i: index })}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '2px' }}>
                       {merged ? (
@@ -397,12 +371,23 @@ function TransactionItemsTable({ items, onItemChange, onItemsChange, onDeleteIte
       {items.length > 0 && (
         <div style={{ margin: '0.5rem 0 0', fontSize: '0.8125rem', color: '#64748b', lineHeight: 1.7 }}>
           <div>각 <strong>컬럼 제목을 누르면</strong> <strong>오름차순 정렬</strong>하거나, 값을 체크해서 <strong>그 값만 골라 볼</strong> 수 있습니다. 정렬은 항목 순서를 실제로 바꾸고(출력 순서도 바뀜), 필터는 보기에서만 숨깁니다.</div>
-          <div><strong>이동</strong> 칸을 잡고 드래그 → 다른 행 <strong>본문</strong>에 놓으면 순서변경, 다른 행의 <strong>이동 칸</strong>에 놓으면 합치기</div>
+          <div><strong>이동</strong> 칸을 잡고 드래그 → 다른 행 <strong>본문</strong>에 놓으면 순서변경, 다른 행의 <strong>이동 칸</strong>에 놓으면 합치기. 끄는 동안 <strong>마우스 휠</strong>로 위아래로 이동할 수 있고, 창 위·아래 끝으로 가져가도 따라 내려갑니다. <strong>Esc</strong>로 취소.</div>
           <div>합쳐진 행은 <strong>▶</strong>로 펼쳐서 원본을 볼 수 있고, 원본도 드래그해서 <strong>그룹 안 순서변경</strong>이나 <strong>그룹 밖으로 빼내기</strong>가 됩니다. 원본이 1개만 남으면 병합이 자동으로 풀립니다.</div>
           <div>출력(PDF)에는 합쳐진 대표 행만 나가고 원본은 반영되지 않습니다.</div>
         </div>
       )}
       </div>
+
+      {dragSource && (
+        <div ref={ghostRef} className="drag-ghost" aria-hidden="true">
+          {ghostLabel || '(이름 없음)'}
+          <span>
+            {dropTarget?.kind === 'handle' ? '→ 합치기'
+              : dropTarget?.kind === 'sub' ? '→ 그룹 안으로'
+                : dropTarget ? '→ 이 자리로' : ''}
+          </span>
+        </div>
+      )}
 
       {menuColumn && (
         <ColumnFilterMenu
@@ -410,7 +395,7 @@ function TransactionItemsTable({ items, onItemChange, onItemsChange, onDeleteIte
           column={menuColumn}
           items={items}
           selected={filters[menuColumn.key] ?? null}
-          anchorRect={menu.rect}
+          anchorEl={menu.anchor}
           onSort={(dir) => onItemsChange(sortItemsBy(items, menuColumn.key, dir))}
           onApply={(selected) => setColumnFilter(menuColumn.key, selected)}
           onClose={() => setMenu(null)}
