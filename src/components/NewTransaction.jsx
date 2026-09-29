@@ -1,14 +1,17 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
 import * as XLSX from 'xlsx';
-import useStore from '../store';
+import useStore, { resolveSupplier } from '../store';
 import { Upload, Save, Printer, Plus } from 'lucide-react';
 import TransactionPrintTemplate from './TransactionPrintTemplate';
 import { useReactToPrint } from 'react-to-print';
 import { writeTransactionsBackup } from '../lib/transactionExcelSync';
 import { resolveColumnMapping } from '../lib/excelSchema';
 import { applyItemChange, createEmptyItem } from '../lib/transactionItems';
-import { findReceiverInfo } from '../lib/companyLookup';
+import { matchReceiver, receiverInfo } from '../lib/companyLookup';
 import TransactionItemsTable from './TransactionItemsTable';
+import CollapsibleCard from './CollapsibleCard';
+import StatementPartiesCard from './StatementPartiesCard';
+import { applyOverride, patchFor, withPatch } from '../lib/partyOverride';
 
 // Column layout can vary between NC가공일지 workbooks; header text is matched
 // against these aliases so reordered/renamed columns still resolve correctly.
@@ -70,16 +73,48 @@ const excelDateToJSDate = (serial) => {
 }
 
 function NewTransaction() {
-  const { 
-    myCompany, companies, saveTransaction,
+  const {
+    companies, saveTransaction,
     excelRawData, excelSheetNames, excelSelectedSheet, excelGroupedData, excelSelectedCompany,
-    setExcelState
+    excelSupplierId, excelOverrides, setExcelState,
+    receiverAliases, setReceiverAlias, clearReceiverAlias,
   } = useStore();
+  // 공급자 선택도 엑셀 세션 상태처럼 탭을 옮겨 다녀도 유지한다.
+  const supplier = useStore((state) => resolveSupplier(state, excelSupplierId));
+  const setSupplierId = (id) => setExcelState({ excelSupplierId: id });
 
   const groupedData = excelGroupedData || {};
   const sheetNames = excelSheetNames || [];
   const selectedSheet = excelSelectedSheet || '';
   const selectedCompany = excelSelectedCompany || '';
+
+  // 엑셀 업체 이름('가나')으로 거래처 목록에서 공급받는자('(주)가나테크')를 찾는다.
+  // 직접 골라 둔 것(receiverAliases)이 있으면 그걸 쓰고, 없으면 이름 비교로 추정.
+  const matches = useMemo(() => {
+    const out = {};
+    Object.keys(excelGroupedData || {}).forEach((name) => {
+      out[name] = matchReceiver(companies, name, receiverAliases);
+    });
+    return out;
+  }, [excelGroupedData, companies, receiverAliases]);
+  const receiverMatch = matches[selectedCompany] || matchReceiver(companies, selectedCompany, receiverAliases);
+  const receiverId = receiverMatch.company?.id ?? '';
+
+  // 이 명세서(= 지금 고른 거래처의 명세서)에서만 쓰는 공급받는자/공급자 수정분.
+  // 거래처별로 따로 들고, 공급자 수정분은 공급자별로 따로 든다 — 다른 공급자로 바꿨을 때
+  // 앞 공급자에게 한 수정이 엉뚱하게 덮어써지면 안 된다.
+  const overrides = (excelOverrides || {})[selectedCompany] || {};
+  // 공급받는자 수정분도 거래처 id별로 든다 — 다른 거래처로 바꿔 고르면 앞 거래처에 한 수정이 따라오면 안 된다.
+  const receiverPatch = patchFor(overrides.receiver, receiverId);
+  const supplierPatch = overrides.supplier?.[supplier.id];
+  const setOverrides = (next) => setExcelState({
+    excelOverrides: { ...(excelOverrides || {}), [selectedCompany]: next },
+  });
+  const setReceiverPatch = (patch) =>
+    setOverrides({ ...overrides, receiver: withPatch(overrides.receiver, receiverId, patch) });
+  const setSupplierPatch = (patch) => setOverrides({
+    ...overrides, supplier: { ...(overrides.supplier || {}), [supplier.id]: patch },
+  });
 
   const setGroupedData = (data) => setExcelState({ excelGroupedData: data });
   const setSelectedCompany = (data) => setExcelState({ excelSelectedCompany: data });
@@ -186,7 +221,7 @@ function NewTransaction() {
       newGroupedData[companyName].push(item);
     }
 
-    setGroupedData(newGroupedData);
+    setExcelState({ excelGroupedData: newGroupedData, excelOverrides: {} });
     const comps = Object.keys(newGroupedData);
     if (comps.length > 0) {
       setSelectedCompany(comps[0]);
@@ -223,13 +258,24 @@ function NewTransaction() {
       month: parseInt(selectedSheet),
       companyName: selectedCompany,
       date: currentDate,
+      // 저장된 내역에서 다시 출력할 때 같은 공급자로 찍히도록 같이 남긴다.
+      supplierId: supplier.id,
+      // 이 명세서에서만 고친 칸들. 저장된 내역에서 다시 출력해도 똑같이 찍히도록 남긴다.
+      // 공급자 수정분은 어느 공급자에 대한 것인지 같이 남긴다. 저장된 내역에서
+      // 공급자를 바꿔 출력할 때 엉뚱한 회사에 덮어쓰이지 않도록.
+      // 어느 거래처로 찍었는지 남긴다. 엑셀 이름('가나')만으로는 다시 찾기 어렵다.
+      receiverId,
+      receiverOverride: receiverPatch ? { [receiverId]: receiverPatch } : undefined,
+      supplierOverride: supplierPatch ? { [supplier.id]: supplierPatch } : undefined,
       items: currentItems
     });
     writeTransactionsBackup(useStore.getState().transactions).catch(err => console.error('엑셀 백업 저장 실패:', err));
     alert(`${selectedCompany} 거래명세서가 로컬에 저장되었습니다!`);
   };
 
-  const getReceiverInfo = () => findReceiverInfo(companies, selectedCompany);
+  const receiverBase = receiverInfo(receiverMatch.company, selectedCompany);
+  const receiver = applyOverride(receiverBase, receiverPatch);
+  const printSupplier = applyOverride(supplier, supplierPatch);
 
   return (
     <div>
@@ -258,17 +304,22 @@ function NewTransaction() {
       )}
 
       {Object.keys(groupedData).length > 0 && (
-        <div style={{ display: 'flex', gap: '1.5rem', alignItems: 'flex-start' }}>
-          <div className="card" style={{ minWidth: '220px', flexShrink: 0 }}>
-            <div className="card-title">거래처 목록</div>
-            <ul style={{ listStyle: 'none', padding: 0 }}>
+        // 세로로 긴 화면 기준. 거래처를 고른 뒤에는 목록을 접어서 편집 영역만 남길 수 있다.
+        <div>
+          <CollapsibleCard
+            title="거래처 목록"
+            count={`${Object.keys(groupedData).length}곳`}
+          >
+            <ul style={{ listStyle: 'none', padding: 0, display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
               {Object.keys(groupedData).map(comp => (
-                <li 
-                  key={comp} 
+                <li
+                  key={comp}
                   onClick={() => setSelectedCompany(comp)}
                   style={{
-                    padding: '10px 15px',
-                    borderBottom: '1px solid #eee',
+                    padding: '0.4rem 0.75rem',
+                    border: '1px solid',
+                    borderColor: selectedCompany === comp ? '#93c5fd' : 'var(--border-color)',
+                    borderRadius: '6px',
                     cursor: 'pointer',
                     backgroundColor: selectedCompany === comp ? '#eff6ff' : 'transparent',
                     fontWeight: selectedCompany === comp ? 'bold' : 'normal',
@@ -276,24 +327,58 @@ function NewTransaction() {
                   }}
                 >
                   {comp}
+                  {/* 공급받는자를 확인해야 하는 곳: 후보가 여럿이거나 못 찾은 경우 */}
+                  {(matches[comp]?.ambiguous || matches[comp]?.how === 'none') && (
+                    <span
+                      title={matches[comp].how === 'none' ? '거래처 목록에서 찾지 못함' : '비슷한 거래처가 여러 곳'}
+                      style={{
+                        marginLeft: '0.375rem', fontSize: '0.6875rem', fontWeight: 600, color: '#b45309',
+                        backgroundColor: '#fef3c7', border: '1px solid #fcd34d', borderRadius: '4px', padding: '0 4px',
+                      }}
+                    >확인</span>
+                  )}
                 </li>
               ))}
             </ul>
-          </div>
+          </CollapsibleCard>
 
-          <div className="card" style={{ flexGrow: 1, overflowX: 'auto' }}>
-            <div className="card-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          {selectedCompany && (
+            <StatementPartiesCard
+              key={selectedCompany}
+              receiverBase={receiverBase}
+              receiverPatch={receiverPatch}
+              onReceiverPatch={setReceiverPatch}
+              companies={companies}
+              excelName={selectedCompany}
+              receiverMatch={receiverMatch}
+              onReceiverChoose={(id) => setReceiverAlias(selectedCompany, id)}
+              onReceiverAuto={() => clearReceiverAlias(selectedCompany)}
+              supplierBase={supplier}
+              supplierPatch={supplierPatch}
+              onSupplierPatch={setSupplierPatch}
+              supplierId={supplier.id}
+              onSupplierChange={setSupplierId}
+            />
+          )}
+
+          <div className="card" style={{ overflowX: 'auto' }}>
+            <div className="card-title" style={{
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              gap: '0.75rem', flexWrap: 'wrap',
+            }}>
               <span>{selectedCompany} 거래 내역 수정</span>
-              <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                 <button className="btn" onClick={addItem}><Plus size={16} /> 줄 추가</button>
                 <button className="btn" onClick={handleSave}><Save size={16} /> 이 회사만 저장</button>
                 <button className="btn btn-primary" onClick={handlePrint}><Printer size={16} /> 출력/PDF</button>
               </div>
             </div>
 
-            <div className="input-group" style={{ width: '150px', marginBottom: '1rem' }}>
-              <label className="input-label">출력용 작성일자</label>
-              <input className="input-field" value={currentDate} onChange={e => setCurrentDate(e.target.value)} />
+            <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: '0.75rem' }}>
+              <div className="input-group" style={{ width: '150px', marginBottom: 0 }}>
+                <label className="input-label">출력용 작성일자</label>
+                <input className="input-field" value={currentDate} onChange={e => setCurrentDate(e.target.value)} />
+              </div>
             </div>
 
             <TransactionItemsTable
@@ -311,8 +396,8 @@ function NewTransaction() {
         <TransactionPrintTemplate
           ref={printRef} 
           data={currentItems} 
-          supplier={myCompany} 
-          receiver={getReceiverInfo()} 
+          supplier={printSupplier}
+          receiver={receiver} 
           date={currentDate} 
         />
       </div>

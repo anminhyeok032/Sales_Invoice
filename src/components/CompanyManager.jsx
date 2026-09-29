@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import useStore from '../store';
-import { Plus, Trash2, Save, X, Link2, Unlink, RefreshCw } from 'lucide-react';
+import { Plus, Trash2, Save, X, Link2, Unlink, RefreshCw, Star } from 'lucide-react';
 import {
   isFileSystemAccessSupported,
   pickExcelFile,
@@ -10,13 +10,20 @@ import {
   readCompaniesFromHandle,
   writeCompaniesToHandle,
 } from '../lib/companyExcelSync';
+import CollapsibleCard from './CollapsibleCard';
 
 function CompanyManager() {
   const {
-    myCompany, setMyCompany, companies, addCompany, updateCompany, deleteCompany, setCompanies,
+    suppliers, defaultSupplierId, addSupplier, updateSupplier, deleteSupplier, setDefaultSupplier,
+    companies, addCompany, updateCompany, deleteCompany, setCompanies,
     companyExcelFileName, setCompanyExcelFileName, companiesDirty, setCompaniesDirty,
   } = useStore();
-  const [myCompState, setMyCompState] = useState(myCompany);
+
+  // 우리 회사(공급자)는 여러 개. 하나를 골라 편집하고 "저장"을 눌러야 반영된다.
+  const [editingId, setEditingId] = useState(defaultSupplierId);
+  const editing = suppliers.find((s) => s.id === editingId) || suppliers[0];
+  const [myCompState, setMyCompState] = useState(editing);
+  const supplierDirty = JSON.stringify(myCompState) !== JSON.stringify(editing);
 
   // --- Excel file sync (거래처 목록 <-> 업체목록.xls) ---
   const fileHandleRef = useRef(null);
@@ -126,8 +133,35 @@ function CompanyManager() {
   };
 
   const saveMyComp = () => {
-    setMyCompany(myCompState);
-    alert('우리 회사 정보가 저장되었습니다.');
+    updateSupplier(editing.id, myCompState);
+    alert(`${myCompState.name || '공급자'} 정보가 저장되었습니다.`);
+  };
+
+  const confirmDiscard = () =>
+    !supplierDirty || window.confirm('저장하지 않은 공급자 정보가 있습니다. 버리고 넘어갈까요?');
+
+  const selectSupplier = (id) => {
+    if (id === editing.id || !confirmDiscard()) return;
+    setEditingId(id);
+    setMyCompState(suppliers.find((s) => s.id === id));
+  };
+
+  const handleAddSupplier = () => {
+    if (!confirmDiscard()) return;
+    const id = addSupplier({ name: '새 공급자' });
+    setEditingId(id);
+    setMyCompState(useStore.getState().suppliers.find((s) => s.id === id));
+  };
+
+  const handleDeleteSupplier = () => {
+    if (suppliers.length <= 1) return;
+    if (!window.confirm(`${editing.name || '이 공급자'}를 삭제할까요?
+이 공급자로 저장된 명세서는 다시 출력할 때 기본 공급자로 찍힙니다.`)) return;
+    deleteSupplier(editing.id);
+    const next = useStore.getState();
+    const fallback = next.suppliers.find((s) => s.id === next.defaultSupplierId) || next.suppliers[0];
+    setEditingId(fallback.id);
+    setMyCompState(fallback);
   };
 
   // --- 거래처 목록 (공급받는자) — local edits only mark the list dirty; saving to excel is a manual action ---
@@ -152,11 +186,39 @@ function CompanyManager() {
         <h1>업체 관리</h1>
       </div>
 
-      <div className="card">
-        <div className="card-title" style={{ display: 'flex', justifyContent: 'space-between' }}>
-          <span>우리 회사 정보 (공급자)</span>
-          <button className="btn btn-primary" onClick={saveMyComp}><Save size={16} /> 저장</button>
+      <CollapsibleCard
+        title="우리 회사 정보 (공급자)"
+        count={`${suppliers.length}곳`}
+        actions={<button className="btn" onClick={handleAddSupplier}><Plus size={16} /> 공급자 추가</button>}
+      >
+        {/* 명세서 작성/출력 화면에서 이 목록 중 하나를 고른다. */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1rem' }}>
+          {suppliers.map((s) => {
+            const active = s.id === editing.id;
+            return (
+              <button
+                key={s.id}
+                className="btn"
+                onClick={() => selectSupplier(s.id)}
+                style={{
+                  borderColor: active ? '#93c5fd' : undefined,
+                  backgroundColor: active ? '#eff6ff' : undefined,
+                  color: active ? '#2563eb' : undefined,
+                  fontWeight: active ? 700 : 500,
+                }}
+              >
+                {s.name || '(이름 없음)'}
+                {s.id === defaultSupplierId && (
+                  <span style={{
+                    fontSize: '0.6875rem', fontWeight: 600, color: '#1d4ed8', backgroundColor: '#dbeafe',
+                    border: '1px solid #93c5fd', borderRadius: '4px', padding: '0 5px',
+                  }}>기본</span>
+                )}
+              </button>
+            );
+          })}
         </div>
+
         <div className="grid-3">
           <div className="input-group">
             <label className="input-label">등록번호</label>
@@ -178,7 +240,7 @@ function CompanyManager() {
             <label className="input-label">종목</label>
             <input className="input-field" value={myCompState.businessItem} onChange={e => handleMyCompChange('businessItem', e.target.value)} />
           </div>
-          <div className="input-group" style={{ gridColumn: 'span 2' }}>
+          <div className="input-group span-2">
             <label className="input-label">주소</label>
             <input className="input-field" value={myCompState.address} onChange={e => handleMyCompChange('address', e.target.value)} />
           </div>
@@ -209,16 +271,31 @@ function CompanyManager() {
             )}
           </div>
         </div>
-      </div>
 
-      <div className="card">
-        <div className="card-title" style={{ display: 'flex', justifyContent: 'space-between' }}>
-          <span>거래처 목록 (공급받는자)</span>
-          <button className="btn" onClick={handleAddCompany}><Plus size={16} /> 거래처 추가</button>
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'flex-end' }}>
+          {supplierDirty && (
+            <span style={{ fontSize: '0.8125rem', color: '#b45309', marginRight: 'auto' }}>저장하지 않은 변경사항이 있습니다.</span>
+          )}
+          <button className="btn" onClick={() => setDefaultSupplier(editing.id)} disabled={editing.id === defaultSupplierId}>
+            <Star size={16} /> 기본 공급자로 지정
+          </button>
+          <button className="btn" style={{ color: 'red' }} onClick={handleDeleteSupplier} disabled={suppliers.length <= 1}
+            title={suppliers.length <= 1 ? '공급자는 최소 하나 있어야 합니다' : undefined}>
+            <Trash2 size={16} /> 이 공급자 삭제
+          </button>
+          <button className="btn btn-primary" onClick={saveMyComp} disabled={!supplierDirty}>
+            <Save size={16} /> 저장
+          </button>
         </div>
+      </CollapsibleCard>
 
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem',
+      <CollapsibleCard
+        title="거래처 목록 (공급받는자)"
+        count={`${companies.length}곳`}
+        actions={<button className="btn" onClick={handleAddCompany}><Plus size={16} /> 거래처 추가</button>}
+        // 엑셀 연동 상태와 "수정사항 저장하기"는 목록을 접어도 계속 보여야 한다.
+        subheader={<div style={{
+          display: 'flex', alignItems: 'center', gap: '0.75rem', margin: '0 0 1rem',
           padding: '0.75rem', backgroundColor: '#f8fafc', borderRadius: '6px', flexWrap: 'wrap'
         }}>
           {syncStatus === 'checking' && (
@@ -254,20 +331,21 @@ function CompanyManager() {
             </>
           )}
           {syncError && <span style={{ fontSize: '0.875rem', color: 'red', width: '100%' }}>{syncError}</span>}
-        </div>
-
+        </div>}
+      >
         <div className="data-table-container">
-          <table className="data-table">
+          <table className="data-table data-table--cols">
             <thead>
               <tr>
-                <th>상호(엑셀과 동일)</th>
-                <th>등록번호</th>
-                <th>대표자</th>
-                <th>업태</th>
-                <th>종목</th>
-                <th>주소</th>
-                <th>전화</th>
-                <th style={{ width: '60px' }}>관리</th>
+                {/* 실제 거래처 데이터에서 가장 긴 값이 잘리지 않는 폭 */}
+                <th style={{ minWidth: '230px' }}>상호(엑셀과 동일)</th>
+                <th style={{ minWidth: '130px' }}>등록번호</th>
+                <th style={{ minWidth: '170px' }}>대표자</th>
+                <th style={{ minWidth: '100px' }}>업태</th>
+                <th style={{ minWidth: '190px' }}>종목</th>
+                <th style={{ minWidth: '460px' }}>주소</th>
+                <th style={{ minWidth: '135px' }}>전화</th>
+                <th style={{ width: '56px' }}>관리</th>
               </tr>
             </thead>
             <tbody>
@@ -294,7 +372,7 @@ function CompanyManager() {
             {syncStatus === 'connected' && ' 위 목록을 수정한 뒤에는 "수정사항 저장하기" 버튼을 눌러야 연동된 엑셀 파일에 반영됩니다.'}
           </p>
         </div>
-      </div>
+      </CollapsibleCard>
     </div>
   );
 }

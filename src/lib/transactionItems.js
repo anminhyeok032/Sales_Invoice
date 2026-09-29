@@ -1,3 +1,5 @@
+import { toDateKey } from './dateRange';
+
 export function createEmptyItem() {
   return { date: '', name: '', spec: '', unit: 'EA', qty: 0, price: 0, supply: 0, tax: 0, note: '', newOrMod: '', processingTime: '' };
 }
@@ -38,12 +40,7 @@ export function normalizeSpec(spec) {
 
 // 날짜는 'YY/MM/DD'(엑셀 파싱 결과)와 직접 입력한 다른 형식이 섞일 수 있어서,
 // 숫자만 뽑아 8자리로 맞춘 뒤 비교한다. 비교 불가한 값은 가장 낮은 순위.
-function dateSortKey(date) {
-  const digits = String(date ?? '').replace(/\D/g, '');
-  if (digits.length === 6) return `20${digits}`;
-  if (digits.length === 8) return digits;
-  return '';
-}
+const dateSortKey = toDateKey;
 
 let mergeSeq = 0;
 // 펼침 상태를 인덱스가 아니라 그룹 자체에 묶어두기 위한 식별자.

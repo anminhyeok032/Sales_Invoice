@@ -31,3 +31,7 @@ private-data/
 # transaction history backup file, if a user picks this folder in the save dialog)
 /*.xlsx
 /*.xls
+
+# python bytecode from tools/
+__pycache__/
+*.pyc

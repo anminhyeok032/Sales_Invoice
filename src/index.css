@@ -34,6 +34,19 @@ body {
   padding: 2rem;
 }
 
+/* 세로로 긴 화면에서는 바깥 여백이 아까우므로 줄인다. */
+@media (max-width: 900px) {
+  .app-container {
+    width: 100%;
+    padding: 1rem 0.75rem;
+  }
+
+  .card {
+    padding: 1rem;
+    margin-bottom: 1rem;
+  }
+}
+
 .header {
   margin-bottom: 2rem;
   display: flex;
@@ -147,6 +160,46 @@ body {
   background-color: #f8fafc;
 }
 
+/* 명세서 품목 편집표.
+   세로로 긴 화면에서는 폭이 모자라 칸이 짓눌리고 품목 이름이 줄바꿈되므로,
+   줄 간격은 좁히되 각 칸에는 최소 폭을 줘서 글자가 접히지 않게 한다.
+   표가 화면보다 넓어지면 .data-table-container 안에서 가로로 스크롤된다. */
+.data-table--compact {
+  min-width: 1320px;
+}
+
+.data-table--compact th, .data-table--compact td {
+  padding: 0.25rem 0.35rem;
+  white-space: nowrap;
+}
+
+.data-table--compact th {
+  vertical-align: bottom;
+  line-height: 1.25;
+}
+
+.data-table--compact .input-field {
+  padding: 0.25rem 0.4rem;
+  line-height: 1.35;
+}
+
+/* 품목 / 규격은 글자가 길다. 나머지 칸은 헤더에서 폭을 고정하고 이 둘이 남는
+   폭을 나눠 갖되, 아래 최소 폭 밑으로는 줄어들지 않는다. */
+/* 실제 데이터에서 가장 긴 값(품목 233px, 규격 136px)이 잘리지 않는 폭. */
+.data-table--compact .col-name { min-width: 280px; }
+.data-table--compact .col-spec { min-width: 180px; }
+
+/* 거래처 목록도 같은 이유로 최소 폭을 준다. 폭이 모자라면 칸이 짓눌려
+   사업자번호나 주소가 잘려 보인다. */
+.data-table--cols {
+  min-width: 1420px;
+}
+
+.data-table--cols th, .data-table--cols td {
+  padding: 0.4rem 0.5rem;
+  white-space: nowrap;
+}
+
 /* Form Grid */
 .grid-2 {
   display: grid;
@@ -164,6 +217,31 @@ body {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 1rem;
+}
+
+/* 두 칸을 차지하는 입력칸 (예: 주소) */
+.span-2 {
+  grid-column: span 2;
+}
+
+/* 세로로 긴 화면에서는 입력칸이 옆으로 늘어서 있으면 하나하나가 너무 좁아진다. */
+@media (max-width: 900px) {
+  .grid-3, .grid-4 {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 620px) {
+  .grid-2, .grid-3, .grid-4 {
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+  }
+
+  /* 한 칸짜리 격자에서 span이 남아 있으면 암시적 두 번째 칸이 생겨
+     한 줄로 접히지 않는다. */
+  .span-2 {
+    grid-column: auto;
+  }
 }
 
 /* Printing styles */

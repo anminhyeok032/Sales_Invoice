@@ -3,10 +3,17 @@ import NewTransaction from './components/NewTransaction';
 import History from './components/History';
 import CompanyManager from './components/CompanyManager';
 import { FileSpreadsheet, History as HistoryIcon, Building2 } from 'lucide-react';
-import useStore from './store';
+import useStore, { initTransactionPersistence } from './store';
 
 function App() {
   const [activeTab, setActiveTab] = useState('new');
+
+  // 저장된 내역은 localStorage가 아니라 IndexedDB에 있다. 앱이 뜨면 한 번 읽어온다.
+  useEffect(() => {
+    initTransactionPersistence().catch((err) => {
+      console.error('저장된 내역을 불러오지 못했습니다:', err);
+    });
+  }, []);
 
   useEffect(() => {
     const handleBeforeUnload = (e) => {
@@ -30,7 +37,7 @@ function App() {
   return (
     <div className="app-container">
       {/* Navigation */}
-      <div style={{ display: 'flex', gap: '1rem', marginBottom: '2rem', borderBottom: '1px solid #e2e8f0', paddingBottom: '1rem' }}>
+      <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '1.5rem', borderBottom: '1px solid #e2e8f0', paddingBottom: '1rem' }}>
         <button
           className={`btn ${activeTab === 'new' ? 'btn-primary' : ''}`}
           onClick={() => switchTab('new')}
