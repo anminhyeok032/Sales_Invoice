@@ -7,8 +7,8 @@
 // 'YYYYMMDD' 문자열. 알아볼 수 없으면 빈 문자열.
 export function toDateKey(value) {
   const digits = String(value ?? '').replace(/\D/g, '');
-  if (digits.length === 6) return `20${digits}`;   // yy.mm.dd
-  if (digits.length === 8) return digits;          // yyyy.mm.dd
+  if (digits.length === 6) return `20${digits}`;   // yy/mm/dd
+  if (digits.length === 8) return digits;          // yyyy/mm/dd
   return '';
 }
 

@@ -86,3 +86,37 @@ export function filterItems(items, filters) {
 export function isFilterActive(filters) {
   return Object.values(filters).some((v) => Array.isArray(v));
 }
+
+// 필터로 보이는 줄에만 변경(순서변경/합치기/빼내기/정렬)을 적용하고, 숨긴 줄은 제자리에 둔다.
+//   visibleIndexes: 보이는 줄의 원래 인덱스(오름차순)  — filterItems()의 index들
+//   transform: 보이는 줄만 모은 배열을 받아 바뀐 배열을 돌려주는 함수
+// 보이는 줄이 차지하던 "자리"에 바뀐 줄을 차례로 다시 채워 넣는다. 합쳐서 줄이 줄면 뒤쪽 자리는
+// 비고, 빼내기처럼 줄이 늘면 남는 줄은 마지막 자리 바로 뒤에 들어간다. 필터가 없으면
+// (모든 줄이 보임) transform 결과 그대로다.
+export function applyToVisible(items, visibleIndexes, transform) {
+  const next = transform(visibleIndexes.map((i) => items[i]));
+  const slots = new Set(visibleIndexes);
+  const out = [];
+  let taken = 0;
+  let lastSlot = -1;
+  items.forEach((item, i) => {
+    if (!slots.has(i)) { out.push(item); return; }
+    if (taken < next.length) {
+      out.push(next[taken]);
+      taken += 1;
+      lastSlot = out.length - 1;
+    }
+  });
+  if (taken < next.length) out.splice(lastSlot + 1, 0, ...next.slice(taken));
+  return out;
+}
+
+// 이 필터 상태를 나타내는 안정적인 글자. 같은 조건이면 항상 같은 글자라서, 필터로 저장한 명세서를
+// 다시 저장할 때 "같은 화면"인지 알아보는 데 쓴다. 필터가 없으면 ''.
+export function filtersKey(filters) {
+  return Object.keys(filters)
+    .filter((k) => Array.isArray(filters[k]))
+    .sort()
+    .map((k) => `${k}=${[...filters[k]].sort().join('|')}`)
+    .join(';');
+}

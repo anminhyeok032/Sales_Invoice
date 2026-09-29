@@ -20,12 +20,12 @@ function CompanyManager() {
     companyExcelFileName, setCompanyExcelFileName, companiesDirty, setCompaniesDirty,
   } = useStore();
 
-  // 우리 회사(공급자)는 여러 개. 하나를 골라 편집하고 "저장"을 눌러야 반영된다.
+  // 우리 회사(공급자)는 여러 개. 하나를 골라 편집한다. 입력한 내용은 바로 저장소에 반영된다.
+  // (예전에는 이 화면 안에 사본을 두고 "저장"을 눌러야 반영했는데, 저장을 누르지 않고 다른 탭으로
+  // 옮기거나 창을 닫으면 입력한 내용이 사라지고 추가만 된 빈 "새 공급자"가 남았다.)
   const [editingId, setEditingId] = useState(defaultSupplierId);
   const editing = suppliers.find((s) => s.id === editingId) || suppliers[0];
-  const [myCompState, setMyCompState] = useState(editing);
-  const supplierDirty = JSON.stringify(myCompState) !== JSON.stringify(editing);
-  const stampPreview = useTransparentStamp(myCompState.stamp);
+  const stampPreview = useTransparentStamp(editing.stamp);
 
   // --- Excel file sync (거래처 목록 <-> 업체목록.xls) ---
   const fileHandleRef = useRef(null);
@@ -120,7 +120,7 @@ function CompanyManager() {
 
   // --- 우리 회사 정보 (공급자) ---
   const handleMyCompChange = (field, value) => {
-    setMyCompState(prev => ({ ...prev, [field]: value }));
+    updateSupplier(editing.id, { [field]: value });
   };
 
   const handleStampUpload = (e) => {
@@ -134,25 +134,13 @@ function CompanyManager() {
     reader.readAsDataURL(file);
   };
 
-  const saveMyComp = () => {
-    updateSupplier(editing.id, myCompState);
-    alert(`${myCompState.name || '공급자'} 정보가 저장되었습니다.`);
-  };
-
-  const confirmDiscard = () =>
-    !supplierDirty || window.confirm('저장하지 않은 공급자 정보가 있습니다. 버리고 넘어갈까요?');
-
   const selectSupplier = (id) => {
-    if (id === editing.id || !confirmDiscard()) return;
     setEditingId(id);
-    setMyCompState(suppliers.find((s) => s.id === id));
   };
 
   const handleAddSupplier = () => {
-    if (!confirmDiscard()) return;
     const id = addSupplier({ name: '새 공급자' });
     setEditingId(id);
-    setMyCompState(useStore.getState().suppliers.find((s) => s.id === id));
   };
 
   const handleDeleteSupplier = () => {
@@ -163,7 +151,6 @@ function CompanyManager() {
     const next = useStore.getState();
     const fallback = next.suppliers.find((s) => s.id === next.defaultSupplierId) || next.suppliers[0];
     setEditingId(fallback.id);
-    setMyCompState(fallback);
   };
 
   // --- 거래처 목록 (공급받는자) — local edits only mark the list dirty; saving to excel is a manual action ---
@@ -224,27 +211,27 @@ function CompanyManager() {
         <div className="grid-3">
           <div className="input-group">
             <label className="input-label">등록번호</label>
-            <input className="input-field" value={myCompState.regNo} onChange={e => handleMyCompChange('regNo', e.target.value)} />
+            <input className="input-field" value={editing.regNo} onChange={e => handleMyCompChange('regNo', e.target.value)} />
           </div>
           <div className="input-group">
             <label className="input-label">상호</label>
-            <input className="input-field" value={myCompState.name} onChange={e => handleMyCompChange('name', e.target.value)} />
+            <input className="input-field" value={editing.name} onChange={e => handleMyCompChange('name', e.target.value)} />
           </div>
           <div className="input-group">
             <label className="input-label">대표자</label>
-            <input className="input-field" value={myCompState.president} onChange={e => handleMyCompChange('president', e.target.value)} />
+            <input className="input-field" value={editing.president} onChange={e => handleMyCompChange('president', e.target.value)} />
           </div>
           <div className="input-group">
             <label className="input-label">업태</label>
-            <input className="input-field" value={myCompState.businessType} onChange={e => handleMyCompChange('businessType', e.target.value)} />
+            <input className="input-field" value={editing.businessType} onChange={e => handleMyCompChange('businessType', e.target.value)} />
           </div>
           <div className="input-group">
             <label className="input-label">종목</label>
-            <input className="input-field" value={myCompState.businessItem} onChange={e => handleMyCompChange('businessItem', e.target.value)} />
+            <input className="input-field" value={editing.businessItem} onChange={e => handleMyCompChange('businessItem', e.target.value)} />
           </div>
           <div className="input-group span-2">
             <label className="input-label">주소</label>
-            <input className="input-field" value={myCompState.address} onChange={e => handleMyCompChange('address', e.target.value)} />
+            <input className="input-field" value={editing.address} onChange={e => handleMyCompChange('address', e.target.value)} />
           </div>
         </div>
 
@@ -256,7 +243,7 @@ function CompanyManager() {
               display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0,
               backgroundColor: '#f8fafc'
             }}>
-              {myCompState.stamp ? (
+              {editing.stamp ? (
                 <img src={stampPreview} alt="도장 미리보기" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
               ) : (
                 <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>미등록</span>
@@ -266,7 +253,7 @@ function CompanyManager() {
               이미지 업로드
               <input type="file" accept="image/*" style={{ display: 'none' }} onChange={handleStampUpload} />
             </label>
-            {myCompState.stamp && (
+            {editing.stamp && (
               <button className="btn" style={{ color: 'red' }} onClick={() => handleMyCompChange('stamp', '')}>
                 <X size={16} /> 삭제
               </button>
@@ -275,18 +262,13 @@ function CompanyManager() {
         </div>
 
         <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'flex-end' }}>
-          {supplierDirty && (
-            <span style={{ fontSize: '0.8125rem', color: '#b45309', marginRight: 'auto' }}>저장하지 않은 변경사항이 있습니다.</span>
-          )}
+          <span style={{ fontSize: '0.8125rem', color: '#64748b', marginRight: 'auto' }}>입력한 내용은 바로 저장됩니다.</span>
           <button className="btn" onClick={() => setDefaultSupplier(editing.id)} disabled={editing.id === defaultSupplierId}>
             <Star size={16} /> 기본 공급자로 지정
           </button>
           <button className="btn" style={{ color: 'red' }} onClick={handleDeleteSupplier} disabled={suppliers.length <= 1}
             title={suppliers.length <= 1 ? '공급자는 최소 하나 있어야 합니다' : undefined}>
             <Trash2 size={16} /> 이 공급자 삭제
-          </button>
-          <button className="btn btn-primary" onClick={saveMyComp} disabled={!supplierDirty}>
-            <Save size={16} /> 저장
           </button>
         </div>
       </CollapsibleCard>

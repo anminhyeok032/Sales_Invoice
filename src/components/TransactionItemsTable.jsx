@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, GripVertical, Trash2, Unlink, Filter, Plus } from 'lucide-react';
 import { useDragReorder } from '../hooks/useDragReorder';
 import ColumnFilterMenu from './ColumnFilterMenu';
-import { ITEM_COLUMNS, filterItems, isFilterActive, sortItemsBy } from '../lib/itemTableView';
+import { ITEM_COLUMNS, filterItems, isFilterActive, sortItemsBy, applyToVisible } from '../lib/itemTableView';
 import {
   reorderItems,
   mergeItems,
@@ -54,6 +54,12 @@ function TransactionItemsTable({
   const filtered = isFilterActive(filters);
   const visibleRows = filterItems(items, filters);
 
+  // 필터를 걸어도 순서변경/합치기/빼내기/정렬은 그대로 된다. 보이는 줄만 모아서 그 안에서 바꾸고,
+  // 숨긴 줄은 제자리에 둔다(applyToVisible). 끌기의 위치 번호(p, i)는 전체 목록이 아니라
+  // "보이는 줄 안에서의 순서"다. 필터가 없으면 보이는 줄이 곧 전체라서 예전과 똑같다.
+  const visibleIndexes = visibleRows.map((r) => r.index);
+  const applyToView = (transform) => onItemsChange(applyToVisible(items, visibleIndexes, transform));
+
   const setColumnFilter = (key, selected) => onFiltersChange((prev) => {
     const next = { ...prev };
     if (selected === null) delete next[key];
@@ -91,42 +97,39 @@ function TransactionItemsTable({
   };
 
   const handleDrop = (source, target) => {
-    // 필터가 걸려 있으면 화면에 없는 줄이 섞여 있어서 "몇 번째 앞으로"가
-    // 무슨 뜻인지 정해지지 않는다. 순서변경/합치기는 필터를 푼 뒤에.
-    if (filtered) return;
     const fromSub = source.p != null;
 
     if (target.kind === 'row') {
-      if (fromSub) return onItemsChange(extractGroupSource(items, source.p, source.i, target.i));
+      if (fromSub) return applyToView((v) => extractGroupSource(v, source.p, source.i, target.i));
       if (source.i === target.i) return;
-      return onItemsChange(reorderItems(items, source.i, target.i));
+      return applyToView((v) => reorderItems(v, source.i, target.i));
     }
 
     if (target.kind === 'handle') {
       if (fromSub) {
         if (source.p === target.i) return;
-        return onItemsChange(moveSourceToGroup(items, source.p, source.i, target.i, null));
+        return applyToView((v) => moveSourceToGroup(v, source.p, source.i, target.i, null));
       }
       if (source.i === target.i) return;
-      return onItemsChange(mergeItems(items, [source.i, target.i]));
+      return applyToView((v) => mergeItems(v, [source.i, target.i]));
     }
 
     // target.kind === 'sub'
     if (!fromSub) {
       if (source.i === target.p) return;
-      return onItemsChange(moveItemIntoGroup(items, source.i, target.p, target.i));
+      return applyToView((v) => moveItemIntoGroup(v, source.i, target.p, target.i));
     }
     if (source.p === target.p) {
-      return onItemsChange(reorderGroupSource(items, source.p, source.i, target.i));
+      return applyToView((v) => reorderGroupSource(v, source.p, source.i, target.i));
     }
-    return onItemsChange(moveSourceToGroup(items, source.p, source.i, target.p, target.i));
+    return applyToView((v) => moveSourceToGroup(v, source.p, source.i, target.p, target.i));
   };
 
   // 끌어서 놓기는 포인터 이벤트로 한다(useDragReorder 설명 참고 — 끄는 동안 휠 스크롤이 된다).
   // 놓을 수 있는 칸은 data-drop-* 로 표시하고, 이 표 안의 칸만 대상으로 삼는다.
   const tableRef = useRef(null);
   const { dragSource, dropTarget, beginDrag, ghostRef, ghostLabel } =
-    useDragReorder(handleDrop, { disabled: filtered, scopeRef: tableRef });
+    useDragReorder(handleDrop, { scopeRef: tableRef });
 
   const isDragging = (p, i) => dragSource && dragSource.p === p && dragSource.i === i;
   const isTarget = (kind, p, i) =>
@@ -156,7 +159,7 @@ function TransactionItemsTable({
             className="drag-handle"
             onPointerDown={(e) => beginDrag(e, { p: parentIndex, i: subIndex }, source.name)}
             title="드래그: 그룹 안 순서변경 / 병합 밖 행에 놓으면 이 그룹에서 빠짐"
-            style={{ textAlign: 'center', color: '#94a3b8', cursor: filtered ? 'not-allowed' : 'grab' }}
+            style={{ textAlign: 'center', color: '#94a3b8', cursor: 'grab' }}
           >
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '2px' }}>
               <span style={{ color: '#cbd5e1' }}>└</span>
@@ -195,8 +198,8 @@ function TransactionItemsTable({
         }}>
           <Filter size={14} />
           <span>
-            {items.length}줄 중 <strong>{visibleRows.length}줄</strong>만 보이며, <strong>출력과 합계도 이 {visibleRows.length}줄만</strong> 기준입니다.
-            (저장은 숨긴 줄까지 전체가 그대로 저장됩니다. 필터 중에는 순서변경/합치기 불가)
+            {items.length}줄 중 <strong>{visibleRows.length}줄</strong>만 보이며, <strong>출력·합계·저장이 모두 이 {visibleRows.length}줄만</strong> 기준입니다.
+            순서변경·합치기·삭제도 이 줄들에서 그대로 되고, 숨긴 줄은 제자리에 남습니다.
           </span>
           <button className="btn" style={{ padding: '0.1rem 0.5rem', fontSize: '0.8125rem' }}
             onClick={() => onFiltersChange({})}>
@@ -239,17 +242,17 @@ function TransactionItemsTable({
           </tr>
         </thead>
         <tbody>
-          {visibleRows.map(({ item, index }) => {
+          {visibleRows.map(({ item, index }, vi) => {
             const merged = isMergedItem(item);
             const expanded = merged && expandedGroups.has(item.mergeId);
             return (
               <React.Fragment key={item.mergeId || index}>
                 <tr
-                  data-drop-kind="row" data-drop-i={index}
+                  data-drop-kind="row" data-drop-i={vi}
                   style={{
-                    opacity: isDragging(null, index) ? 0.5 : 1,
+                    opacity: isDragging(null, vi) ? 0.5 : 1,
                     transition: 'background-color 0.2s',
-                    backgroundColor: isTarget('row', null, index)
+                    backgroundColor: isTarget('row', null, vi)
                       ? HIGHLIGHT
                       : merged ? '#eff6ff' : undefined,
                     borderBottom: '1px solid var(--border-color)',
@@ -257,17 +260,17 @@ function TransactionItemsTable({
                 >
                   <td
                     className="drag-handle"
-                    data-drop-kind="handle" data-drop-i={index}
-                    onPointerDown={(e) => beginDrag(e, { p: null, i: index }, item.name)}
+                    data-drop-kind="handle" data-drop-i={vi}
+                    onPointerDown={(e) => beginDrag(e, { p: null, i: vi }, item.name)}
                     title={filtered
-                      ? '필터가 걸려 있는 동안에는 순서변경/합치기를 할 수 없습니다'
+                      ? '드래그: 보이는 줄 안에서 순서변경 / 다른 행의 이 칸에 놓으면 합치기 (숨긴 줄은 그대로)'
                       : '드래그: 순서변경 / 다른 행의 이 칸에 놓으면 합치기'}
                     style={{
                       textAlign: 'center',
-                      color: filtered ? '#cbd5e1' : '#94a3b8',
-                      cursor: filtered ? 'not-allowed' : 'grab',
-                      backgroundColor: isTarget('handle', null, index) ? HIGHLIGHT : undefined,
-                      outline: isTarget('handle', null, index) ? '2px dashed #2563eb' : 'none',
+                      color: '#94a3b8',
+                      cursor: 'grab',
+                      backgroundColor: isTarget('handle', null, vi) ? HIGHLIGHT : undefined,
+                      outline: isTarget('handle', null, vi) ? '2px dashed #2563eb' : 'none',
                     }}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '2px' }}>
@@ -360,7 +363,7 @@ function TransactionItemsTable({
                     </button>
                   </td>
                 </tr>
-                {expanded && renderSourceRows(item, index)}
+                {expanded && renderSourceRows(item, vi)}
               </React.Fragment>
             );
           })}
@@ -404,7 +407,7 @@ function TransactionItemsTable({
 
       {items.length > 0 && (
         <div style={{ margin: '0.5rem 0 0', fontSize: '0.8125rem', color: '#64748b', lineHeight: 1.7 }}>
-          <div>줄 오른쪽 끝의 <strong>＋</strong>를 누르면 그 줄 <strong>아래에 빈 줄</strong>이 끼워집니다(<strong>Shift</strong>+클릭은 위). 각 <strong>컬럼 제목을 누르면</strong> <strong>오름차순 정렬</strong>하거나, 값을 체크해서 <strong>그 값만 골라 볼</strong> 수 있습니다. 정렬은 항목 순서를 실제로 바꾸고(출력 순서도 바뀜), 필터는 <strong>화면과 출력에서 그 줄만 남깁니다</strong>(저장은 전체).</div>
+          <div>줄 오른쪽 끝의 <strong>＋</strong>를 누르면 그 줄 <strong>아래에 빈 줄</strong>이 끼워집니다(<strong>Shift</strong>+클릭은 위). 각 <strong>컬럼 제목을 누르면</strong> <strong>오름차순 정렬</strong>하거나, 값을 체크해서 <strong>그 값만 골라 볼</strong> 수 있습니다. 정렬은 항목 순서를 실제로 바꾸고(출력 순서도 바뀜), 필터는 <strong>화면·출력·저장에서 그 줄만 남깁니다</strong>(숨긴 줄은 명세서에 포함되지 않음).</div>
           <div><strong>이동</strong> 칸을 잡고 드래그 → 다른 행 <strong>본문</strong>에 놓으면 순서변경, 다른 행의 <strong>이동 칸</strong>에 놓으면 합치기. 끄는 동안 <strong>마우스 휠</strong>로 위아래로 이동할 수 있고, 창 위·아래 끝으로 가져가도 따라 내려갑니다. <strong>Esc</strong>로 취소.</div>
           <div>합쳐진 행은 <strong>▶</strong>로 펼쳐서 원본을 볼 수 있고, 원본도 드래그해서 <strong>그룹 안 순서변경</strong>이나 <strong>그룹 밖으로 빼내기</strong>가 됩니다. 원본이 1개만 남으면 병합이 자동으로 풀립니다.</div>
           <div>출력(PDF)에는 합쳐진 대표 행만 나가고 원본은 반영되지 않습니다.</div>
@@ -430,7 +433,7 @@ function TransactionItemsTable({
           items={items}
           selected={filters[menuColumn.key] ?? null}
           anchorEl={menu.anchor}
-          onSort={(dir) => onItemsChange(sortItemsBy(items, menuColumn.key, dir))}
+          onSort={(dir) => applyToView((v) => sortItemsBy(v, menuColumn.key, dir))}
           onApply={(selected) => setColumnFilter(menuColumn.key, selected)}
           onClose={() => setMenu(null)}
         />

@@ -1,11 +1,11 @@
-import React, { useState, useRef, useMemo } from 'react';
+import React, { useState, useRef, useMemo, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import useStore, { resolveSupplier } from '../store';
 import { Upload, Save, Printer, Plus } from 'lucide-react';
 import TransactionPrintTemplate from './TransactionPrintTemplate';
 import { openPrintPreview } from '../lib/printPreview';
 import { useItemFilters } from '../hooks/useItemFilters';
-import { filterItems, isFilterActive } from '../lib/itemTableView';
+import { filterItems, isFilterActive, filtersKey } from '../lib/itemTableView';
 import { writeTransactionsBackup } from '../lib/transactionExcelSync';
 import { resolveColumnMapping } from '../lib/excelSchema';
 import { applyItemChange, createEmptyItem } from '../lib/transactionItems';
@@ -25,11 +25,32 @@ const NC_LOG_FIELD_DEFS = [
   { key: 'company', aliases: ['업체', '거래처', '업체명', '거래처명'], fallbackIndex: 2, required: true },
   { key: 'moldNo', aliases: ['금형No', '금형번호', '금형'], fallbackIndex: 3 },
   { key: 'newOrMod', aliases: ['신작or수정', '신작or수정or자사불량', '신작/수정', '신작수정', '구분'], fallbackIndex: 4 },
-  { key: 'core', aliases: ['코어및전극', '코어/전극', '코어', '전극'], fallbackIndex: 6 },
+  { key: 'core', aliases: ['코어및전극', '코어/전극', '코어', '전극'], contains: ['코어', '전극'], fallbackIndex: 6 },
   { key: 'qty', aliases: ['수량', '수량(EA)'], fallbackIndex: 8 },
   { key: 'processingTime', aliases: ['가공시간', '가공 시간'], fallbackIndex: 9 },
   { key: 'note', aliases: ['비고', '메모', '특이사항'], fallbackIndex: 11 },
 ];
+
+// 엑셀을 읽어서 항목을 만드는 방식의 버전. 방식을 바꿀 때마다 올린다.
+// 읽은 결과는 브라우저에 저장돼 남아 있어서, 코드를 고쳐도 파일을 다시 읽기 전에는 옛 결과가 그대로
+// 보인다. 저장된 결과의 버전(excelParserVersion)이 이 값보다 낮으면 옛 방식으로 읽은 것이다.
+//   2: 품목에 '코어 및 전극'과 구분을 붙임 / 업로드하면 '데이터시트'가 아니라 월 시트를 연다
+const NC_PARSER_VERSION = 2;
+
+// 업로드한 통합문서에서 처음에 열 시트. 가공일지에는 월 시트(1월~12월) 앞에 입력 선택지를 적어 둔
+// '데이터시트' 같은 보조 시트가 있을 수 있다. 맨 첫 시트를 그냥 열면 그 보조 시트가 가공일지 데이터로
+// 읽혀서 가짜 항목이 만들어진다. 데이터가 든 월 시트를 우선 고른다: 데이터가 있는 첫 '~월' 시트,
+// 없으면 첫 '~월' 시트, 그것도 없으면 맨 첫 시트.
+function pickInitialSheet(rawData, sheetNames) {
+  const months = sheetNames.filter((name) => /월$/.test(String(name).trim()));
+  const hasRows = (name) => {
+    const { columnMap, dataStartRow } = resolveColumnMapping(rawData[name] || [], NC_LOG_FIELD_DEFS, {
+      maxScanRows: 10, fallbackDataStartRow: 2,
+    });
+    return (rawData[name] || []).slice(dataStartRow).some((row) => row && columnMap.company != null && row[columnMap.company]);
+  };
+  return months.find(hasRows) || months[0] || sheetNames[0] || '';
+}
 
 // 가공시간 셀은 두 가지 형태로 들어온다:
 // 1) 순수 숫자 (엑셀 시간값, 하루=1) — 해당 행 전체의 합산 가공시간이 이미 들어있음
@@ -80,7 +101,7 @@ function NewTransaction() {
   const {
     companies, saveTransaction,
     excelRawData, excelSheetNames, excelSelectedSheet, excelGroupedData, excelSelectedCompany,
-    excelSupplierId, excelOverrides, setExcelState,
+    excelSupplierId, excelOverrides, excelParserVersion, setExcelState,
     receiverAliases, setReceiverAlias, clearReceiverAlias,
   } = useStore();
   // 공급자 선택도 엑셀 세션 상태처럼 탭을 옮겨 다녀도 유지한다.
@@ -143,14 +164,15 @@ function NewTransaction() {
       });
 
       const months = wb.SheetNames;
+      const firstSheet = pickInitialSheet(rawData, months);
       setExcelState({
         excelRawData: rawData,
         excelSheetNames: months,
-        excelSelectedSheet: months.length > 0 ? months[0] : ''
+        excelSelectedSheet: firstSheet,
       });
-      
-      if (months.length > 0) {
-        parseSheet(rawData, months[0]);
+
+      if (firstSheet) {
+        parseSheet(rawData, firstSheet);
       }
     };
     reader.readAsArrayBuffer(file);
@@ -164,7 +186,7 @@ function NewTransaction() {
     }
   };
 
-  const parseSheet = (rawData, sheetName) => {
+  const parseSheet = (rawData, sheetName, { keepSelection = false } = {}) => {
     const json = rawData[sheetName];
     if (!json) return;
     
@@ -192,12 +214,12 @@ function NewTransaction() {
       const unit = 'EA';
       const note = (columnMap.note != null && row[columnMap.note]) || '';
 
-      // 품목 = 금형No / 코어 및 전극 / 구분(신작·수정…). 빈 칸은 건너뛴다.
+      // 품목 = 금형No 코어 및 전극 구분(신작·수정…) — 띄어쓰기 한 칸으로 잇는다. 빈 칸은 건너뛴다.
       // 구분은 화면 확인용 칸(newOrMod)에도 따로 남기지만, 품목에도 붙어서 명세서에 인쇄된다.
       const itemName = [moldNo, core, newOrMod]
         .map((part) => String(part).trim())
         .filter(Boolean)
-        .join(' / ');
+        .join(' ');
 
       const formattedDate = excelDateToJSDate(rawDate);
 
@@ -222,14 +244,33 @@ function NewTransaction() {
       newGroupedData[companyName].push(item);
     }
 
-    setExcelState({ excelGroupedData: newGroupedData, excelOverrides: {} });
+    setExcelState({ excelGroupedData: newGroupedData, excelOverrides: {}, excelParserVersion: NC_PARSER_VERSION });
     const comps = Object.keys(newGroupedData);
-    if (comps.length > 0) {
+    if (keepSelection && comps.includes(selectedCompany)) {
+      // 옛 결과를 새 방식으로 다시 읽는 경우: 보고 있던 거래처를 그대로 둔다
+    } else if (comps.length > 0) {
       setSelectedCompany(comps[0]);
     } else {
       setSelectedCompany('');
     }
   };
+
+  // 읽은 결과는 브라우저에 저장돼 남는다. 그래서 읽는 방식을 고친 뒤에도 옛 결과가 그대로 보일 수 있다.
+  // (실제로 '코어 및 전극'을 고친 뒤에도 옛 화면에는 그 값이 없어서 "안 고쳐졌다"로 보였다.)
+  const parserStale = Object.keys(groupedData).length > 0
+    && Object.keys(excelRawData || {}).length > 0
+    && (excelParserVersion || 0) < NC_PARSER_VERSION;
+  // 옛 결과 위에 직접 입력한 내용이 없으면(단가·금액·세액이 모두 0이고 합친 줄이 없으면) 다시 읽어도
+  // 잃을 것이 없다. 하나라도 있으면 자동으로 지우지 않는다.
+  const parserUntouched = Object.values(groupedData).flat().every((item) =>
+    !Number(item.price) && !Number(item.supply) && !Number(item.tax) && !item.mergedFrom);
+
+  useEffect(() => {
+    if (!parserStale || !parserUntouched) return;
+    parseSheet(excelRawData, selectedSheet, { keepSelection: true });
+    // 화면이 열릴 때(또는 저장된 결과의 버전이 바뀔 때) 한 번만 — parseSheet는 매 렌더 새로 만들어진다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [parserStale, parserUntouched]);
 
   const currentItems = groupedData[selectedCompany] || [];
 
@@ -284,10 +325,17 @@ function NewTransaction() {
       receiverId,
       receiverOverride: receiverPatch ? { [receiverId]: receiverPatch } : undefined,
       supplierOverride: supplierPatch ? { [supplier.id]: supplierPatch } : undefined,
-      items: currentItems
+      // 저장하는 것은 회사 전체 내역이 아니라 "지금 출력을 누르면 나오는 그 상태"다:
+      // 필터로 남긴 줄을, 정렬·이동·합치기를 한 그 순서 그대로. 숨긴 줄은 이 명세서에 포함되지 않는다.
+      items: printItems,
+      // 어떤 필터 상태로 저장했는지. 필터 조건이 다르면 같은 달·같은 거래처여도 별개 명세서로 남고,
+      // 같은 조건으로 다시 저장하면 그 명세서를 갱신한다(store.saveTransaction).
+      viewKey: filtersKey(itemFilters),
     });
     writeTransactionsBackup(useStore.getState().transactions).catch(err => console.error('엑셀 백업 저장 실패:', err));
-    alert(`${selectedCompany} 거래명세서가 로컬에 저장되었습니다!`);
+    alert(itemsFiltered
+      ? `${selectedCompany} 명세서를 저장했습니다. (필터 상태 그대로 ${printItems.length}줄, 숨긴 ${currentItems.length - printItems.length}줄은 제외)`
+      : `${selectedCompany} 거래명세서가 로컬에 저장되었습니다!`);
   };
 
   const receiverBase = receiverInfo(receiverMatch.company, selectedCompany);
@@ -312,11 +360,33 @@ function NewTransaction() {
       </div>
 
       {sheetNames.length > 0 && (
-        <div className="card" style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+        <div className="card" style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
           <strong>기준 월 선택:</strong>
           <select className="input-field" style={{ width: '150px' }} value={selectedSheet} onChange={handleSheetSelect}>
             {sheetNames.map(sheet => <option key={sheet} value={sheet}>{sheet}</option>)}
           </select>
+        </div>
+      )}
+
+      {/* 옛 방식으로 읽어 둔 결과가 화면에 남아 있고, 그 위에 직접 입력한 내용(단가 등)이 있어서 자동으로
+          다시 읽지 못한 경우. 안내 없이 두면 '코어 및 전극'이 빠진 옛 내용이 계속 보인다. */}
+      {parserStale && !parserUntouched && (
+        <div className="card" style={{
+          display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap',
+          backgroundColor: '#fffbeb', border: '1px solid #fcd34d',
+        }}>
+          <span style={{ fontSize: '0.875rem', color: '#92400e', flex: '1 1 20rem' }}>
+            <strong>이 화면의 내용은 예전 방식으로 읽은 것</strong>이라 <strong>코어 및 전극</strong>이 품목에 빠져 있습니다.
+            다시 읽으면 새 방식으로 바뀌지만, <strong>이 화면에서 입력한 단가·수정 내용은 사라집니다</strong>.
+            (이미 저장한 명세서는 영향이 없습니다)
+          </span>
+          <button className="btn btn-primary" onClick={() => {
+            if (window.confirm('엑셀을 새 방식으로 다시 읽습니다.\n이 화면에서 입력한 단가·수정 내용은 사라집니다. 계속할까요?')) {
+              parseSheet(excelRawData, selectedSheet, { keepSelection: true });
+            }
+          }}>
+            다시 읽기
+          </button>
         </div>
       )}
 
@@ -385,8 +455,16 @@ function NewTransaction() {
             }}>
               <span>{selectedCompany} 거래 내역 수정</span>
               <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                <button className="btn" onClick={addItem}><Plus size={16} /> 줄 추가</button>
-                <button className="btn" onClick={handleSave}><Save size={16} /> 이 회사만 저장</button>
+                <button className="btn" onClick={addItem} disabled={itemsFiltered}
+                  title={itemsFiltered ? '필터가 걸려 있는 동안에는 줄을 추가할 수 없습니다 (새 빈 줄이 필터에 가려집니다)' : undefined}>
+                  <Plus size={16} /> 줄 추가
+                </button>
+                <button className="btn" onClick={handleSave}
+                  title={itemsFiltered
+                    ? '지금 보이는(필터·정렬한) 줄만, 출력할 때와 같은 상태로 저장합니다'
+                    : '이 회사의 명세서를 저장합니다'}>
+                  <Save size={16} /> 현재 상태 저장{itemsFiltered ? ` (${printItems.length}줄)` : ''}
+                </button>
                 <button className="btn btn-primary" onClick={handlePrint}
                   title="새 창에서 미리보기 (필터가 걸려 있으면 보이는 줄만 출력)">
                   <Printer size={16} /> 출력/PDF{itemsFiltered ? ` (${printItems.length}줄)` : ''}

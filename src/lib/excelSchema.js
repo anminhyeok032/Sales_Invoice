@@ -23,7 +23,11 @@ function mapColumns(headerRow, fieldDefs) {
     if (!norm) return;
     for (const field of fieldDefs) {
       if (map[field.key] !== undefined) continue;
-      if (field.aliases.some((a) => normalizeHeader(a) === norm)) {
+      // aliases: 정리한 헤더가 정확히 같을 때. contains: 정리한 헤더에 이 글자가 들어 있을 때.
+      // (정확히 같은 별칭만 받으면 '코어 및 전극(번호)'처럼 조금만 달라도 그 칸이 통째로 무시된다.)
+      const exact = field.aliases.some((a) => normalizeHeader(a) === norm);
+      const partial = (field.contains || []).some((c) => norm.includes(normalizeHeader(c)));
+      if (exact || partial) {
         map[field.key] = idx;
       }
     }

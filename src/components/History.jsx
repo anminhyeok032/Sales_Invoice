@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import useStore, { resolveSupplier } from '../store';
 import { openPrintPreview } from '../lib/printPreview';
 import { useItemFilters } from '../hooks/useItemFilters';
-import { filterItems, isFilterActive } from '../lib/itemTableView';
+import { filterItems, isFilterActive, filtersKey } from '../lib/itemTableView';
 import TransactionPrintTemplate from './TransactionPrintTemplate';
 import { Printer, Trash2, Plus, Save, Link2, Unlink, DatabaseBackup } from 'lucide-react';
 import {
@@ -296,9 +296,25 @@ function History() {
 
   const handleSave = () => {
     if (!selectedTx) return;
-    saveTransaction(selectedTx);
+
+    if (!itemsFiltered) {
+      // 필터가 없으면 이 명세서를 그대로 갱신한다.
+      saveTransaction(selectedTx);
+      backupNow();
+      alert('수정된 내용이 안전하게 저장되었습니다!');
+      return;
+    }
+
+    // 필터가 걸려 있으면 "지금 출력되는 상태"(보이는 줄, 정렬·이동·합치기한 순서 그대로)만 따로 저장한다.
+    // 원래 명세서에 덮어쓰면 숨긴 줄이 지워지므로 원본은 건드리지 않고 새 명세서로 남긴다.
+    // 같은 필터 조건으로 다시 저장하면 그 새 명세서가 갱신된다(store.saveTransaction의 viewKey).
+    const { id: _original, ...rest } = selectedTx;   // eslint-disable-line no-unused-vars
+    const savedId = saveTransaction({ ...rest, items: printItems, viewKey: filtersKey(itemFilters) });
     backupNow();
-    alert('수정된 내용이 안전하게 저장되었습니다!');
+    // 저장된 상태를 바로 열어 보여준다. 다른 명세서가 선택되므로 필터는 저절로 풀린다.
+    const saved = useStore.getState().transactions.find((t) => t.id === savedId);
+    if (saved) setSelectedTx(saved);
+    alert(`필터 상태 그대로 ${printItems.length}줄을 새 명세서로 저장했습니다. (원래 명세서 ${allItems.length}줄은 그대로 남아 있습니다)`);
   };
 
   return (
@@ -382,10 +398,10 @@ function History() {
                   ))}
                 </select>
                 <span className="history-filters__range">
-                  <input className="input-field" placeholder="26.01.01" value={fromDate}
+                  <input className="input-field" placeholder="26/01/01" value={fromDate}
                     onChange={(e) => setFromDate(e.target.value)} />
                   <span>~</span>
-                  <input className="input-field" placeholder="26.12.31" value={toDate}
+                  <input className="input-field" placeholder="26/12/31" value={toDate}
                     onChange={(e) => setToDate(e.target.value)} />
                 </span>
               </div>
@@ -479,8 +495,16 @@ function History() {
           }}>
             <span>{selectedTx ? `${selectedTx.companyName} 내역 수정` : '상세보기'}</span>
             <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-              <button className="btn" onClick={addItem} disabled={!selectedTx}><Plus size={16} /> 줄 추가</button>
-              <button className="btn" onClick={handleSave} disabled={!selectedTx}><Save size={16} /> 변경사항 저장</button>
+              <button className="btn" onClick={addItem} disabled={!selectedTx || itemsFiltered}
+                title={itemsFiltered ? '필터가 걸려 있는 동안에는 줄을 추가할 수 없습니다 (새 빈 줄이 필터에 가려집니다)' : undefined}>
+                <Plus size={16} /> 줄 추가
+              </button>
+              <button className="btn" onClick={handleSave} disabled={!selectedTx}
+                title={itemsFiltered
+                  ? '지금 보이는(필터·정렬한) 줄만, 출력할 때와 같은 상태로 새 명세서로 저장합니다. 원래 명세서는 그대로 둡니다'
+                  : '이 명세서의 변경사항을 저장합니다'}>
+                <Save size={16} /> {itemsFiltered ? `현재 상태를 새 명세서로 저장 (${printItems.length}줄)` : '변경사항 저장'}
+              </button>
               <button className="btn btn-primary" onClick={handlePrint} disabled={!selectedTx}
                 title="새 창에서 미리보기 (필터가 걸려 있으면 보이는 줄만 출력)">
                 <Printer size={16} /> 출력/PDF{itemsFiltered ? ` (${printItems.length}줄)` : ''}
