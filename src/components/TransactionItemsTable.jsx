@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, GripVertical, Trash2, Unlink, Filter, Plus } from 'lucide-react';
 import { useDragReorder } from '../hooks/useDragReorder';
 import ColumnFilterMenu from './ColumnFilterMenu';
-import { ITEM_COLUMNS, filterItems, isFilterActive, sortItemsBy, applyToVisible } from '../lib/itemTableView';
+import { ITEM_COLUMNS, filterItems, isFilterActive, sortItemsBy, applyToVisible, createItemForFilters } from '../lib/itemTableView';
 import {
   reorderItems,
   mergeItems,
@@ -29,6 +29,7 @@ const HIGHLIGHT = '#bfdbfe';
 const COL_WIDTH = {
   newOrMod: '44px', qty: '44px', processingTime: '50px',
   spec: '16%', price: '66px', supply: '72px', tax: '62px',
+  no: '30px',        // 현재 목록에서 몇 번째 줄인지
   actions: '46px',   // 줄 넣기(+) · 삭제(휴지통) · (합쳐진 줄이면) 합치기 해제
 };
 
@@ -73,18 +74,24 @@ function TransactionItemsTable({
   // 줄 끼워 넣기: 새 빈 줄이 들어갈 자리(index)를 받아서 넣고, 곧바로 그 줄의 품목 칸에 커서를 둔다.
   // 줄은 index 순서로 그려지므로(key) 새 줄의 입력칸은 새로 생기지 않고 기존 칸이 재사용된다 —
   // autoFocus로는 안 되고, 아이템이 바뀐 뒤에 직접 찾아서 포커스를 준다.
+  // 필터가 걸려 있으면 새 줄은 필터 조건에 맞는 값으로 채워서 넣는다(createItemForFilters) — 안 그러면
+  // 넣자마자 숨겨진다. pendingFocus는 원래 목록의 자리이고, 화면에서는 보이는 줄 중 몇 번째인지로 바꿔 찾는다.
   const pendingFocus = useRef(null);
   const insertRow = (index) => {
     pendingFocus.current = index;
-    onItemsChange(insertItemAt(items, index));
+    onItemsChange(insertItemAt(items, index, createItemForFilters(filters)));
   };
   useEffect(() => {
     const at = pendingFocus.current;
     if (at === null) return;
     pendingFocus.current = null;
+    const visiblePos = visibleIndexes.indexOf(at);
+    if (visiblePos < 0) return;
     tableRef.current
-      ?.querySelector(`tr[data-drop-kind="row"][data-drop-i="${at}"] td:nth-child(3) input`)
+      ?.querySelector(`tr[data-drop-kind="row"][data-drop-i="${visiblePos}"] td:nth-child(4) input`)
       ?.focus();
+    // 새 줄이 들어간 직후(items가 바뀔 때)만 — visibleIndexes는 그때의 값이면 된다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items]);
 
   const toggleExpand = (mergeId) => {
@@ -155,6 +162,7 @@ function TransactionItemsTable({
             opacity: isDragging(parentIndex, subIndex) ? 0.4 : 1,
           }}
         >
+          <td />
           <td
             className="drag-handle"
             onPointerDown={(e) => beginDrag(e, { p: parentIndex, i: subIndex }, source.name)}
@@ -200,6 +208,7 @@ function TransactionItemsTable({
           <span>
             {items.length}줄 중 <strong>{visibleRows.length}줄</strong>만 보이며, <strong>출력·합계·저장이 모두 이 {visibleRows.length}줄만</strong> 기준입니다.
             순서변경·합치기·삭제도 이 줄들에서 그대로 되고, 숨긴 줄은 제자리에 남습니다.
+            줄을 넣으면 필터 조건에 맞는 값으로 채워지며, 그 칸을 바꾸면 조건에서 벗어나 숨겨질 수 있습니다.
           </span>
           <button className="btn" style={{ padding: '0.1rem 0.5rem', fontSize: '0.8125rem' }}
             onClick={() => onFiltersChange({})}>
@@ -211,6 +220,7 @@ function TransactionItemsTable({
       <table ref={tableRef} className="data-table data-table--compact">
         <thead>
           <tr>
+            <th style={{ width: COL_WIDTH.no }} title="지금 보이는 목록에서 몇 번째 줄인지 (출력 순서)">No</th>
             <th style={{ width: '32px' }} title="이동">이동</th>
             {columns.map((col) => {
               const on = Array.isArray(filters[col.key]);
@@ -247,6 +257,15 @@ function TransactionItemsTable({
             const expanded = merged && expandedGroups.has(item.mergeId);
             return (
               <React.Fragment key={item.mergeId || index}>
+                {/* 인쇄는 한 장에 PRINT_ROWS_PER_PAGE줄씩 끊어서 다음 장으로 넘어간다. 그 경계(12줄과 13줄 사이,
+                    24줄과 25줄 사이…)를 표시한다. 지금 보이는(필터·정렬한) 목록 기준이라 출력과 같다. */}
+                {vi > 0 && vi % PRINT_ROWS_PER_PAGE === 0 && (
+                  <tr className="page-break-row" aria-hidden="true">
+                    <td colSpan={columns.length + 3} style={{ padding: 0, border: 'none' }}>
+                      <div style={{ borderTop: '2px dashed #dc2626' }} />
+                    </td>
+                  </tr>
+                )}
                 <tr
                   data-drop-kind="row" data-drop-i={vi}
                   style={{
@@ -258,6 +277,7 @@ function TransactionItemsTable({
                     borderBottom: '1px solid var(--border-color)',
                   }}
                 >
+                  <td style={{ textAlign: 'center', color: '#64748b', fontSize: '0.75rem', padding: '0 2px' }}>{vi + 1}</td>
                   <td
                     className="drag-handle"
                     data-drop-kind="handle" data-drop-i={vi}
@@ -364,11 +384,10 @@ function TransactionItemsTable({
                     )}
                     <button
                       className="btn"
-                      disabled={filtered}
                       title={filtered
-                        ? '필터가 걸려 있는 동안에는 줄을 끼워 넣을 수 없습니다 (새 줄이 필터에 가려집니다)'
+                        ? '이 줄 아래에 줄 넣기 — 필터 조건에 맞는 값으로 채워집니다 (Shift+클릭: 이 줄 위에 넣기)'
                         : '이 줄 아래에 줄 넣기 (Shift+클릭: 이 줄 위에 넣기)'}
-                      style={{ padding: '1px', color: filtered ? '#cbd5e1' : '#16a34a', border: 'none', background: 'none' }}
+                      style={{ padding: '1px', color: '#16a34a', border: 'none', background: 'none' }}
                       onClick={(e) => insertRow(e.shiftKey ? index : index + 1)}
                     >
                       <Plus size={13} />

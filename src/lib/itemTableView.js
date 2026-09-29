@@ -5,6 +5,8 @@
 //            보기만 바꾸면 정렬한 대로 인쇄되지 않아 쓸모가 없다.
 //   · 필터 — 보기에서 숨기기만 한다. 엑셀과 같고, 숨긴 항목도 저장/출력에는 그대로 나간다.
 
+import { createEmptyItem } from './transactionItems';
+
 // 세로 화면에서 가로 스크롤 없이 다 보이도록 제목은 짧게, 긴 설명은 hint(툴팁)로.
 // 단위는 편집표에서 뺐다(항상 EA라 자리만 차지했다). 값은 그대로 두고 인쇄에는 나간다.
 // 순서는 기존 프로그램 화면처럼 품목 바로 옆에 규격.
@@ -20,6 +22,20 @@ export const ITEM_COLUMNS = [
   { key: 'supply', label: ['공급', '가액'], numeric: true, hint: '공급가액' },
   { key: 'tax', label: ['세액'], numeric: true, hint: '세액 (직접 입력)', optional: true },
 ];
+
+// 필터가 걸린 채로 새 줄을 넣을 때 쓰는 줄. 빈 줄을 그대로 넣으면 필터 조건(예: 날짜=09/01)에 안 맞아서
+// 넣자마자 숨겨지므로, 필터를 건 칸마다 체크된 값 중 하나로 채워서 조건에 맞게 만든다. 그 칸이 '(비어 있음)'을
+// 허용하면 빈 채로 둔다. 필터가 없으면 그냥 빈 줄.
+export function createItemForFilters(filters = {}) {
+  const item = createEmptyItem();
+  Object.entries(filters).forEach(([key, allowed]) => {
+    if (!Array.isArray(allowed) || allowed.length === 0 || allowed.includes('')) return;
+    const numeric = ITEM_COLUMNS.find((c) => c.key === key)?.numeric;
+    const value = allowed[0];
+    item[key] = numeric && Number.isFinite(Number(value)) ? Number(value) : value;
+  });
+  return item;
+}
 
 export const EMPTY_LABEL = '(비어 있음)';
 

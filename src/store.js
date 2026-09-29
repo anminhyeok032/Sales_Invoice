@@ -116,8 +116,9 @@ const useStore = create(
           phone: '',
         }
       ],
+      // 새 거래처는 목록 맨 위에 넣는다(방금 추가한 것을 바로 찾아 고칠 수 있게). createdAt은 등록일 정렬용.
       addCompany: (company) => set((state) => ({
-        companies: [...state.companies, { ...company, id: Date.now().toString() }]
+        companies: [{ ...company, id: Date.now().toString(), createdAt: Date.now() }, ...state.companies]
       })),
       updateCompany: (id, updatedCompany) => set((state) => ({
         companies: state.companies.map(c => c.id === id ? { ...c, ...updatedCompany } : c)

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import useStore from '../store';
-import { Plus, Trash2, Save, X, Link2, Unlink, RefreshCw, Star } from 'lucide-react';
+import { Plus, Trash2, Save, X, Link2, Unlink, RefreshCw, Star, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
 import {
   isFileSystemAccessSupported,
   pickExcelFile,
@@ -12,6 +12,7 @@ import {
 } from '../lib/companyExcelSync';
 import CollapsibleCard from './CollapsibleCard';
 import { useTransparentStamp } from '../lib/stampImage';
+import { sortCompanies, formatCreatedDate } from '../lib/companySort';
 
 function CompanyManager() {
   const {
@@ -153,10 +154,44 @@ function CompanyManager() {
     setEditingId(fallback.id);
   };
 
+  // 거래처 목록 정렬: 상호 / 등록일. 머리글을 누를 때마다 (처음 방향) -> 반대 방향 -> 정렬 없음(목록 순서)
+  // 순으로 바뀐다. 보이는 순서만 바꾸고 목록 자체(엑셀에 저장되는 순서)는 그대로다.
+  const [companySort, setCompanySort] = useState({ key: '', dir: 'asc' });
+  const companyTableRef = useRef(null);
+  const toggleCompanySort = (key) => setCompanySort((prev) => {
+    const first = key === 'created' ? 'desc' : 'asc';   // 등록일은 최근 것이 먼저
+    if (prev.key !== key) return { key, dir: first };
+    if (prev.dir === first) return { key, dir: first === 'asc' ? 'desc' : 'asc' };
+    return { key: '', dir: 'asc' };
+  });
+  const sortedCompanies = sortCompanies(companies, companySort.key, companySort.dir);
+  const sortHeader = (key, label) => {
+    const on = companySort.key === key;
+    const Icon = !on ? ArrowUpDown : companySort.dir === 'asc' ? ArrowUp : ArrowDown;
+    return (
+      <button
+        type="button" className="th-filter"
+        onClick={() => toggleCompanySort(key)}
+        title={`${label} 기준 정렬 (눌러서 오름/내림/해제)`}
+        style={on ? { backgroundColor: '#dbeafe', color: '#1d4ed8' } : undefined}
+      >
+        <span>{label}</span><Icon size={11} />
+      </button>
+    );
+  };
+
   // --- 거래처 목록 (공급받는자) — local edits only mark the list dirty; saving to excel is a manual action ---
   const handleAddCompany = () => {
     addCompany({ name: '새 회사', regNo: '', president: '', address: '', businessType: '', businessItem: '', phone: '' });
     if (syncStatus === 'connected') setCompaniesDirty(true);
+    // 새 거래처는 목록 맨 위에 들어간다. 정렬이 걸려 있으면 엉뚱한 자리로 가서 못 찾으므로 정렬을 풀고,
+    // 곧바로 그 줄의 상호 칸에 커서를 둔다.
+    setCompanySort({ key: '', dir: 'asc' });
+    setTimeout(() => {
+      const input = companyTableRef.current?.querySelector('tbody tr input');
+      input?.focus();
+      input?.select();
+    }, 0);
   };
 
   const handleUpdateCompany = (id, patch) => {
@@ -318,22 +353,23 @@ function CompanyManager() {
         </div>}
       >
         <div className="data-table-container">
-          <table className="data-table data-table--cols">
+          <table ref={companyTableRef} className="data-table data-table--cols">
             <thead>
               <tr>
                 {/* 실제 거래처 데이터에서 가장 긴 값이 잘리지 않는 폭 */}
-                <th style={{ minWidth: '230px' }}>상호(엑셀과 동일)</th>
+                <th style={{ minWidth: '230px' }}>{sortHeader('name', '상호(엑셀과 동일)')}</th>
                 <th style={{ minWidth: '130px' }}>등록번호</th>
                 <th style={{ minWidth: '170px' }}>대표자</th>
                 <th style={{ minWidth: '100px' }}>업태</th>
                 <th style={{ minWidth: '190px' }}>종목</th>
                 <th style={{ minWidth: '460px' }}>주소</th>
                 <th style={{ minWidth: '135px' }}>전화</th>
+                <th style={{ minWidth: '84px' }}>{sortHeader('created', '등록일')}</th>
                 <th style={{ width: '56px' }}>관리</th>
               </tr>
             </thead>
             <tbody>
-              {companies.map(comp => (
+              {sortedCompanies.map(comp => (
                 <tr key={comp.id}>
                   <td><input className="input-field" value={comp.name} onChange={e => handleUpdateCompany(comp.id, { name: e.target.value })} /></td>
                   <td><input className="input-field" value={comp.regNo} onChange={e => handleUpdateCompany(comp.id, { regNo: e.target.value })} /></td>
@@ -342,6 +378,7 @@ function CompanyManager() {
                   <td><input className="input-field" value={comp.businessItem} onChange={e => handleUpdateCompany(comp.id, { businessItem: e.target.value })} /></td>
                   <td><input className="input-field" value={comp.address} onChange={e => handleUpdateCompany(comp.id, { address: e.target.value })} /></td>
                   <td><input className="input-field" value={comp.phone || ''} onChange={e => handleUpdateCompany(comp.id, { phone: e.target.value })} /></td>
+                  <td style={{ fontSize: '0.8125rem', color: '#64748b', whiteSpace: 'nowrap' }} title="거래처를 추가한 날 (엑셀·기존 프로그램에서 불러온 것은 알 수 없음)">{formatCreatedDate(comp) || '-'}</td>
                   <td>
                     <button className="btn" style={{ padding: '0.25rem', color: 'red' }} onClick={() => handleDeleteCompany(comp.id)}>
                       <Trash2 size={16} />

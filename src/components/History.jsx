@@ -12,7 +12,8 @@ import {
   disconnectBackupFile,
   writeTransactionsBackup,
 } from '../lib/transactionExcelSync';
-import { applyItemChange, createEmptyItem, computeTotals } from '../lib/transactionItems';
+import { applyItemChange, computeTotals } from '../lib/transactionItems';
+import { createItemForFilters } from '../lib/itemTableView';
 import { matchReceiver, receiverInfo } from '../lib/companyLookup';
 import { parseLegacyImportFile, summarizeImport, mergeCompanies } from '../lib/legacyImport';
 import { toDateKey, isWithinRange } from '../lib/dateRange';
@@ -315,7 +316,7 @@ function History() {
 
   const addItem = () => {
     if (!selectedTx) return;
-    setItems([...selectedTx.items, createEmptyItem()]);
+    setItems([...selectedTx.items, createItemForFilters(itemFilters)]);
   };
 
   const deleteItem = (index) => {
@@ -531,8 +532,8 @@ function History() {
           }}>
             <span>{selectedTx ? `${selectedTx.companyName} 내역 수정` : '상세보기'}</span>
             <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-              <button className="btn" onClick={addItem} disabled={!selectedTx || itemsFiltered}
-                title={itemsFiltered ? '필터가 걸려 있는 동안에는 줄을 추가할 수 없습니다 (새 빈 줄이 필터에 가려집니다)' : undefined}>
+              <button className="btn" onClick={addItem} disabled={!selectedTx}
+                title={itemsFiltered ? '필터 조건에 맞는 값으로 채운 새 줄을 맨 아래에 추가합니다' : undefined}>
                 <Plus size={16} /> 줄 추가
               </button>
               <button className="btn" onClick={handleSave} disabled={!selectedTx}
