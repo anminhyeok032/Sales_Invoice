@@ -97,6 +97,12 @@ const excelDateToJSDate = (serial) => {
   return `${year}/${month.toString().padStart(2, '0')}/${day.toString().padStart(2, '0')}`;
 }
 
+// 오늘 날짜(내 컴퓨터 시간대) 'YYYY/MM/DD'. toISOString()은 UTC 기준이라 한국에서 오전 9시 전에는 어제 날짜가 된다.
+function todaySlash() {
+  const d = new Date();
+  return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function NewTransaction() {
   const {
     companies, saveTransaction,
@@ -145,7 +151,7 @@ function NewTransaction() {
   const setSelectedCompany = (data) => setExcelState({ excelSelectedCompany: data });
   
   const [year, setYear] = useState(new Date().getFullYear());
-  const [currentDate, setCurrentDate] = useState(new Date().toISOString().split('T')[0].replace(/-/g, '/'));
+  const [currentDate, setCurrentDate] = useState(todaySlash());
 
   const printRef = useRef();
 

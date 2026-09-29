@@ -134,6 +134,9 @@ const useStore = create(
       // are excluded from the localStorage blob by partialize.
       transactions: [],
       transactionsLoaded: false,
+      // 가장 최근에 saveTransaction으로 저장한 명세서({ id, seq }). 저장된 내역 화면이 탭을 옮겨도 계속
+      // 살아 있어서, 다른 화면에서 저장한 것이 그쪽 필터에 가려지거나 옛 사본으로 남지 않게 알려 주는 용도.
+      lastSaved: null,
       setTransactions: (transactions) => set({ transactions }),
 
       // 저장한 명세서의 id를 돌려준다(저장 뒤에 그 명세서를 바로 열어 보여줄 때 쓴다).
@@ -166,11 +169,14 @@ const useStore = create(
             const id = newTransactions[existingIndex].id || Date.now().toString();
             newTransactions[existingIndex] = { ...newTransactions[existingIndex], ...transaction, id };
             savedId = id;
-            return { transactions: newTransactions };
+            return { transactions: newTransactions, lastSaved: { id, seq: (state.lastSaved?.seq || 0) + 1 } };
           }
           // Add new
           savedId = Date.now().toString();
-          return { transactions: [...state.transactions, { ...transaction, id: savedId }] };
+          return {
+            transactions: [...state.transactions, { ...transaction, id: savedId }],
+            lastSaved: { id: savedId, seq: (state.lastSaved?.seq || 0) + 1 },
+          };
         });
         return savedId;
       },
@@ -222,6 +228,7 @@ const useStore = create(
         const rest = { ...state };
         delete rest.transactions;
         delete rest.transactionsLoaded;
+        delete rest.lastSaved;
         return rest;
       },
     }

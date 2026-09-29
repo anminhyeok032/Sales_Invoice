@@ -319,7 +319,22 @@ function TransactionItemsTable({
                       }}
                     />
                   </td>
-                  <td style={{ textAlign: 'right', fontWeight: '500' }}>{Number(item.supply).toLocaleString()}</td>
+                  <td>
+                    {/* 단가가 있으면 수량 x 단가로 정해지므로 읽기 전용, 단가가 없을 때만 직접 입력 */}
+                    <input
+                      className="input-field"
+                      style={{ textAlign: 'right', fontWeight: 500, ...(Number(item.price) > 0 ? { backgroundColor: '#f1f5f9' } : {}) }}
+                      type="text"
+                      placeholder="공급가액"
+                      readOnly={Number(item.price) > 0}
+                      title={Number(item.price) > 0 ? '단가가 있으면 수량 × 단가로 계산됩니다 (단가를 지우면 직접 입력)' : '공급가액 (직접 입력)'}
+                      value={Number(item.supply) ? Number(item.supply).toLocaleString() : ''}
+                      onChange={e => {
+                        const raw = e.target.value.replace(/[^0-9]/g, '');
+                        onItemChange(index, 'supply', raw ? Number(raw) : 0);
+                      }}
+                    />
+                  </td>
                   {taxVisible && (
                     <td>
                       <input

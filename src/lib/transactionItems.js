@@ -29,12 +29,14 @@ export function applyItemChange(items, index, field, value) {
   const newItems = [...items];
   newItems[index] = { ...newItems[index], [field]: value };
 
-  // 수량/단가가 바뀌면 공급가액만 다시 계산한다. 세액은 건드리지 않는다 —
-  // 기존 명세서 중 세액이 있었던 건 0.5%도 안 돼서, 사용자가 직접 넣을 때만 들어간다.
-  if (field === 'price' || field === 'qty') {
-    const q = Number(newItems[index].qty) || 0;
-    const p = Number(newItems[index].price) || 0;
-    newItems[index].supply = q * p;
+  // 공급가액은 직접 입력할 수 있지만 단가가 우선이다: 단가가 있으면(0보다 크면) 공급가액은
+  // 항상 수량 x 단가이고, 그때 공급가액을 직접 넣으려는 입력은 무시한다. 단가가 없을 때만
+  // 직접 입력한 값이 남는다. 단가를 지워도 공급가액은 그대로 두어(직접 입력 값이 된다) 고칠 수 있다.
+  // 세액은 건드리지 않는다 — 기존 명세서 중 세액이 있었던 건 0.5%도 안 돼서, 사용자가 직접 넣을 때만 들어간다.
+  const price = Number(newItems[index].price) || 0;
+  if (field === 'supply' && price > 0) return items;
+  if ((field === 'price' || field === 'qty') && price > 0) {
+    newItems[index].supply = (Number(newItems[index].qty) || 0) * price;
   }
   return newItems;
 }

@@ -44,7 +44,7 @@ function periodOf(fromKey, toKey) {
 
 function History() {
   const {
-    transactions, transactionsLoaded, companies, deleteTransaction, saveTransaction,
+    transactions, transactionsLoaded, lastSaved, companies, deleteTransaction, saveTransaction,
     importTransactions, setCompanies, setCompaniesDirty,
     transactionExcelFileName, setTransactionExcelFileName,
   } = useStore();
@@ -118,6 +118,22 @@ function History() {
   const fromKey = toDateKey(fromDate);
   const toKey = toDateKey(toDate);
   const filterActive = Boolean(fromKey || toKey || companyFilter);
+
+  // 이 화면은 탭을 옮겨도 살아 있다(필터·고른 명세서가 그대로 남도록). 그래서 다른 화면에서 저장한 명세서가
+  // 여기 걸려 있는 기간/거래처 조건에 가려 "저장이 안 된 것처럼" 보이거나, 같은 명세서를 옛 사본으로
+  // 들고 있다가 나중에 덮어쓰는 일이 생긴다. 새로 저장된 것이 있으면(렌더 중에 한 번만):
+  //  - 그 명세서가 지금 조건에 가려지면 기간/거래처 조건을 풀어서 목록에 보이게 하고
+  //  - 그 명세서를 열어 둔 상태였으면 저장된 최신 내용으로 바꾼다.
+  const [seenSaveSeq, setSeenSaveSeq] = useState(lastSaved?.seq || 0);
+  if (lastSaved && lastSaved.seq !== seenSaveSeq) {
+    setSeenSaveSeq(lastSaved.seq);
+    const savedRow = rows.find((r) => r.tx.id === lastSaved.id);
+    if (savedRow) {
+      if (companyFilter && savedRow.name !== companyFilter) setCompanyFilter('');
+      if (!isWithinRange(savedRow.tx.date, fromKey, toKey)) { setFromDate(''); setToDate(''); }
+      if (selectedTx?.id === savedRow.tx.id) setSelectedTx(savedRow.tx);
+    }
+  }
 
   const filtered = useMemo(() => {
     const dir = sortDesc ? -1 : 1;

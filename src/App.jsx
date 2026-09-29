@@ -7,6 +7,9 @@ import useStore, { initTransactionPersistence } from './store';
 
 function App() {
   const [activeTab, setActiveTab] = useState('new');
+  // 한 번 열어 본 탭은 계속 살려 두고 숨기기만 한다. 탭을 옮길 때마다 화면을 없애면 그 화면이 들고 있던
+  // 필터, 정렬, 고른 명세서, 수정 중인 줄이 모두 사라진다. 처음 열 때 만들어 이후에는 그대로 둔다.
+  const [visited, setVisited] = useState({ new: true });
 
   // 저장된 내역은 localStorage가 아니라 IndexedDB에 있다. 앱이 뜨면 한 번 읽어온다.
   useEffect(() => {
@@ -31,6 +34,7 @@ function App() {
       const confirmed = window.confirm('거래처 목록에 저장하지 않은 변경사항이 있습니다. 저장하지 않고 이동하시겠습니까?');
       if (!confirmed) return;
     }
+    setVisited((prev) => (prev[tab] ? prev : { ...prev, [tab]: true }));
     setActiveTab(tab);
   };
 
@@ -59,9 +63,9 @@ function App() {
       </div>
 
       {/* Main Content Area */}
-      {activeTab === 'new' && <NewTransaction />}
-      {activeTab === 'history' && <History />}
-      {activeTab === 'companies' && <CompanyManager />}
+      {visited.new && <div hidden={activeTab !== 'new'}><NewTransaction /></div>}
+      {visited.history && <div hidden={activeTab !== 'history'}><History /></div>}
+      {visited.companies && <div hidden={activeTab !== 'companies'}><CompanyManager /></div>}
     </div>
   );
 }
