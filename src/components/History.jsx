@@ -20,6 +20,7 @@ import TransactionItemsTable from './TransactionItemsTable';
 import CollapsibleCard from './CollapsibleCard';
 import { applyOverride, patchFor } from '../lib/partyOverride';
 import { PartiesPanel } from './StatementPartiesCard';
+import PrintOptions from './PrintOptions';
 
 // 한 번에 그리는 최대 줄 수. 가져온 내역이 수천 건이라 전부 그리면 목록이 버벅인다.
 const VISIBLE_LIMIT = 500;
@@ -76,6 +77,7 @@ function History() {
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [companyFilter, setCompanyFilter] = useState('');
+  const [companySearch, setCompanySearch] = useState('');   // 상호명에 들어 있는 글자로 찾기
   const [sortKey, setSortKey] = useState('date');   // date | name | amount
   const [sortDesc, setSortDesc] = useState(true);
 
@@ -105,11 +107,6 @@ function History() {
     });
   }, [transactions, companies, receiverAliases]);
 
-  // 조회 대상 거래처는 저장된 내역에 실제로 있는 상호만 보여준다.
-  const companyOptions = useMemo(
-    () => [...new Set(rows.map((r) => r.name).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko')),
-    [rows]
-  );
   const yearOptions = useMemo(
     () => [...new Set(rows.map((r) => r.dateKey.slice(0, 4)).filter(Boolean))].sort().reverse(),
     [rows]
@@ -117,7 +114,21 @@ function History() {
 
   const fromKey = toDateKey(fromDate);
   const toKey = toDateKey(toDate);
-  const filterActive = Boolean(fromKey || toKey || companyFilter);
+
+  // 거래처 고르기 목록: 저장된 내역 전체가 아니라 지금 조건(기간, 검색어)에서 실제로 내역이 있는 상호만.
+  // 검색어는 공백·대소문자를 무시하고 상호명에 들어 있는지로 본다.
+  const searchKey = companySearch.replace(/\s+/g, '').toLowerCase();
+  const matchesSearch = (r) => !searchKey || r.sortName.toLowerCase().includes(searchKey);
+  const companyOptions = useMemo(
+    () => [...new Set(rows
+      .filter((r) => isWithinRange(r.tx.date, fromKey, toKey) && matchesSearch(r))
+      .map((r) => r.name).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko')),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rows, fromKey, toKey, searchKey]
+  );
+  // 기간이나 검색어를 바꿔서 골라 둔 거래처가 목록에서 사라졌으면 그 선택은 없는 것으로 본다.
+  const activeCompany = companyOptions.includes(companyFilter) ? companyFilter : '';
+  const filterActive = Boolean(fromKey || toKey || activeCompany || searchKey);
 
   // 이 화면은 탭을 옮겨도 살아 있다(필터·고른 명세서가 그대로 남도록). 그래서 다른 화면에서 저장한 명세서가
   // 여기 걸려 있는 기간/거래처 조건에 가려 "저장이 안 된 것처럼" 보이거나, 같은 명세서를 옛 사본으로
@@ -130,6 +141,7 @@ function History() {
     const savedRow = rows.find((r) => r.tx.id === lastSaved.id);
     if (savedRow) {
       if (companyFilter && savedRow.name !== companyFilter) setCompanyFilter('');
+      if (searchKey && !matchesSearch(savedRow)) setCompanySearch('');
       if (!isWithinRange(savedRow.tx.date, fromKey, toKey)) { setFromDate(''); setToDate(''); }
       if (selectedTx?.id === savedRow.tx.id) setSelectedTx(savedRow.tx);
     }
@@ -143,10 +155,12 @@ function History() {
       amount: (a, b) => a.total - b.total,
     }[sortKey];
     return rows
-      .filter((r) => (companyFilter ? r.name === companyFilter : true))
+      .filter((r) => (activeCompany ? r.name === activeCompany : true))
+      .filter(matchesSearch)
       .filter((r) => isWithinRange(r.tx.date, fromKey, toKey))
       .sort((a, b) => dir * cmp(a, b) || dir * a.dateKey.localeCompare(b.dateKey));
-  }, [rows, companyFilter, fromKey, toKey, sortKey, sortDesc]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, activeCompany, searchKey, fromKey, toKey, sortKey, sortDesc]);
 
   // 아래 고정 줄: 지금 조회된 목록 전체의 매출 합계(화면에 다 그리지 않은 줄까지).
   const listTotals = useMemo(() => filtered.reduce(
@@ -170,6 +184,7 @@ function History() {
     setFromDate('');
     setToDate('');
     setCompanyFilter('');
+    setCompanySearch('');
   };
 
   // --- Local excel backup of the saved transaction history (write-only) ---
@@ -422,9 +437,14 @@ function History() {
                 </span>
               </div>
               <div className="history-filters__row">
+                <input className="input-field" style={{ flex: '1 1 7rem', minWidth: 0 }} type="search"
+                  placeholder="거래처 검색" value={companySearch}
+                  onChange={(e) => setCompanySearch(e.target.value)} />
                 <select className="input-field" style={{ flex: '1 1 12rem', minWidth: 0 }}
-                  value={companyFilter} onChange={(e) => setCompanyFilter(e.target.value)}>
-                  <option value="">전체 거래처 ({companyOptions.length}곳)</option>
+                  value={activeCompany} onChange={(e) => setCompanyFilter(e.target.value)}>
+                  <option value="">
+                    {filterActive && (fromKey || toKey || searchKey) ? '조건에 맞는 거래처' : '전체 거래처'} ({companyOptions.length}곳)
+                  </option>
                   {companyOptions.map((name) => <option key={name} value={name}>{name}</option>)}
                 </select>
                 <label className="history-filters__label">정렬</label>
@@ -530,13 +550,16 @@ function History() {
 
           {selectedTx ? (
             <>
-              <div className="input-group" style={{ width: '150px', marginBottom: '0.5rem' }}>
-                <label className="input-label">출력용 작성일자</label>
-                <input
-                  className="input-field"
-                  value={selectedTx.date}
-                  onChange={e => setSelectedTx({ ...selectedTx, date: e.target.value })}
-                />
+              <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: '0.5rem' }}>
+                <div className="input-group" style={{ width: '150px', marginBottom: 0 }}>
+                  <label className="input-label">출력용 작성일자</label>
+                  <input
+                    className="input-field"
+                    value={selectedTx.date}
+                    onChange={e => setSelectedTx({ ...selectedTx, date: e.target.value })}
+                  />
+                </div>
+                <PrintOptions />
               </div>
 
               {/* 칸 내용은 자동 작성에서만 고친다. 여기서는 누구로 찍을지만 고른다. */}

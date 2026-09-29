@@ -85,6 +85,12 @@ const useStore = create(
       }),
       setDefaultSupplier: (id) => set({ defaultSupplierId: id }),
 
+      // 출력 설정. 비고 칸에 무엇을 찍을지 — 인쇄 양식이 이 값을 읽는다(새 명세서 작성/저장된 내역 공통).
+      //  showNote: 품목의 비고(엑셀 비고 칸 등에서 온 메모)
+      //  showDailySum: 그날 마지막 줄에 붙는 일별 공급가액 합계(만원 단위, 예: 15)
+      printOptions: { showNote: true, showDailySum: true },
+      setPrintOptions: (patch) => set((state) => ({ printOptions: { ...state.printOptions, ...patch } })),
+
       // 가공일지 엑셀의 업체 이름 -> 거래처 id. 사용자가 직접 골라 준 것만 남긴다.
       // 엑셀 이름은 매달 같으므로('가나'), 한 번 골라 두면 다음 달에도 그대로 쓴다.
       // ''는 "거래처 목록에 없는 회사로 처리"를 직접 고른 것.

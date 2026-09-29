@@ -8,6 +8,7 @@ import { useItemFilters } from '../hooks/useItemFilters';
 import { filterItems, isFilterActive, filtersKey } from '../lib/itemTableView';
 import { writeTransactionsBackup } from '../lib/transactionExcelSync';
 import { resolveColumnMapping } from '../lib/excelSchema';
+import PrintOptions from './PrintOptions';
 import { applyItemChange, createEmptyItem } from '../lib/transactionItems';
 import { matchReceiver, receiverInfo } from '../lib/companyLookup';
 import TransactionItemsTable from './TransactionItemsTable';
@@ -483,6 +484,7 @@ function NewTransaction() {
                 <label className="input-label">출력용 작성일자</label>
                 <input className="input-field" value={currentDate} onChange={e => setCurrentDate(e.target.value)} />
               </div>
+              <PrintOptions />
             </div>
 
             <TransactionItemsTable

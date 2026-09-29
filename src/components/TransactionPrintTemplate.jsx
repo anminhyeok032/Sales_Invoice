@@ -2,6 +2,7 @@ import React, { useLayoutEffect, useRef, useState } from 'react';
 import { PRINT_ROWS_PER_PAGE } from '../lib/transactionItems';
 import { toDateKey } from '../lib/dateRange';
 import { useTransparentStamp } from '../lib/stampImage';
+import useStore from '../store';
 
 const LINE_HEIGHT = 1.15;
 
@@ -80,6 +81,7 @@ const EMPTY_ROW = { date: '', name: '', spec: '', unit: '', qty: '', price: '', 
 const TransactionPrintTemplate = React.forwardRef(({ data, receiver, supplier, date }, ref) => {
   const MAX_ROWS = PRINT_ROWS_PER_PAGE;
   const items = data || [];
+  const { showNote = true, showDailySum = true } = useStore((s) => s.printOptions) || {};
   // 예전 프로그램 도장(BMP)의 자홍색 배경을 투명하게
   const stampSrc = useTransparentStamp(supplier?.stamp);
 
@@ -95,8 +97,8 @@ const TransactionPrintTemplate = React.forwardRef(({ data, receiver, supplier, d
 
   const enhancedItems = items.map((item, idx) => {
     const isLastOfDate = item.date && dailyInfo[item.date] && dailyInfo[item.date].lastItemIndex === idx;
-    let appendedNote = item.note || '';
-    if (isLastOfDate) {
+    let appendedNote = showNote ? (item.note || '') : '';
+    if (showDailySum && isLastOfDate) {
       const sum = dailyInfo[item.date].sum;
       if (sum > 0) {
         const shortSum = sum / 10000;
