@@ -4,6 +4,8 @@ import { loadTransactions, saveTransactions } from './lib/transactionDb';
 
 export const EMPTY_SUPPLIER = {
   regNo: '', name: '', president: '', address: '', businessType: '', businessItem: '', stamp: '',
+  // 입금 계좌. 명세서 왼쪽 아래(테두리 밖)에 그대로 찍힌다. 예: '은행 : 000000-00-000000 예금주'
+  account: '',
 };
 
 // 선택자(useStore(selector))에서 쓰이므로 매번 새 객체를 만들면 안 된다.
@@ -90,6 +92,10 @@ const useStore = create(
       //  showDailySum: 그날 마지막 줄에 붙는 일별 공급가액 합계(만원 단위, 예: 15)
       printOptions: { showNote: true, showDailySum: true },
       setPrintOptions: (patch) => set((state) => ({ printOptions: { ...state.printOptions, ...patch } })),
+
+      // 여러 줄을 합칠 때 수량/가공시간을 정하는 방식: 'sum'(합산) | 'max'(큰 값) | 'min'(작은 값)
+      mergeOptions: { qty: 'max', time: 'max' },
+      setMergeOptions: (patch) => set((state) => ({ mergeOptions: { ...state.mergeOptions, ...patch } })),
 
       // 가공일지 엑셀의 업체 이름 -> 거래처 id. 사용자가 직접 골라 준 것만 남긴다.
       // 엑셀 이름은 매달 같으므로('가나'), 한 번 골라 두면 다음 달에도 그대로 쓴다.

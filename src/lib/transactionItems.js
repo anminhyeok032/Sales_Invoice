@@ -16,6 +16,37 @@ export function computeTotals(items) {
   return { supply, tax, total: supply + tax };
 }
 
+// 일별 합계(비고 칸에 찍는 값). 같은 날짜의 줄들을 한 묶음으로 보고, 묶음의 마지막 줄에만 그날 공급가액
+// 합계를 돌려준다. 묶음은 날짜가 적힌 줄에서 시작해서, 날짜가 빈 줄들(같은 날짜가 이어지는 줄)을 지나
+// 다른 날짜가 나오기 직전까지다. 같은 날짜가 바로 다음 줄에 또 적혀 있어도 같은 묶음이다.
+//   예) 09/01, (빈칸), (빈칸), 09/02, (빈칸)  ->  세 번째 줄과 다섯 번째 줄에만 합계
+// 합계는 끝자리의 0을 모두 뗀 값이다: 50000 -> '5', 1670 -> '167', 1234 -> '1234'.
+// 반환: items와 같은 길이의 배열. 합계를 찍을 줄에만 글자, 나머지는 ''.
+// 맨 앞에 날짜 없는 줄이 있으면(어느 날짜에도 속하지 않음) 합계에 넣지 않는다. 합계가 0 이하면 찍지 않는다.
+export function dailySumLabels(items) {
+  const labels = items.map(() => '');
+  let currentDate = null;   // 지금 묶음의 날짜 (묶음이 아직 없으면 null)
+  let sum = 0;
+  const close = (lastIndex) => {
+    if (currentDate !== null && sum > 0) labels[lastIndex] = formatDailySum(sum);
+  };
+  items.forEach((item, index) => {
+    const date = String(item.date ?? '').trim();
+    if (date && date !== currentDate) {
+      close(index - 1);
+      currentDate = date;
+      sum = 0;
+    }
+    if (currentDate !== null) sum += Number(item.supply) || 0;
+  });
+  close(items.length - 1);
+  return labels;
+}
+
+function formatDailySum(sum) {
+  return Number.isInteger(sum) ? String(sum).replace(/0+$/, '') : String(sum);
+}
+
 // index 자리에 빈 줄을 하나 끼워 넣은 새 배열. index가 0이면 맨 위, items.length면 맨 끝.
 // 합쳐진 항목이 있어도 최상위 목록 기준이라 그룹 통째로 앞/뒤에 들어간다(그룹 안으로는 안 들어감).
 export function insertItemAt(items, index, newItem = createEmptyItem()) {
@@ -80,6 +111,7 @@ function stripMergeMeta(item) {
   const copy = { ...item };
   delete copy.mergedFrom;
   delete copy.mergeId;
+  delete copy.mergeOptions;
   return copy;
 }
 
@@ -93,9 +125,75 @@ function mergeSpecs(sources) {
   return normalized[0];
 }
 
+// 여러 줄을 합칠 때 수량과 가공시간을 어떻게 정할지. 합친 줄마다 따로 정한다(대표 항목의 mergeOptions) —
+// 펼친 줄에서 고른다. 새로 합칠 때의 기본값은 표 위에서 고르는 값(store.mergeOptions)이고, 이 파일의
+// mergeOptions 변수가 그 기본값이다. 이미 합쳐 둔 줄은 기본값을 바꿔도 그대로다.
+//   sum: 합산 / max: 가장 큰 값 / min: 가장 작은 값
+// 방식이 기록되지 않은 예전 합침은 둘 다 max로 본다.
+const LEGACY_MERGE_OPTIONS = { qty: 'max', time: 'max' };
+export const MERGE_MODES = [
+  { value: 'sum', label: '합산' },
+  { value: 'max', label: '큰 값' },
+  { value: 'min', label: '작은 값' },
+];
+let mergeOptions = { qty: 'max', time: 'max' };
+export function setMergeOptions(options) {
+  mergeOptions = { ...mergeOptions, ...options };
+}
+
+// 'H:MM' 글자 -> 분. 한 칸에 여러 개('1면 1:10 / 2면 6:20'처럼)가 들어 있으면 그 시간들의 합. 시간이 없으면 null.
+function timeToMinutes(text) {
+  const tokens = String(text ?? '').match(/\d+:\d{1,2}/g);
+  if (!tokens) return null;
+  return tokens.reduce((sum, t) => {
+    const [h, m] = t.split(':');
+    return sum + Number(h) * 60 + Number(m);
+  }, 0);
+}
+
+export function minutesToHM(minutes) {
+  const total = Math.round(minutes);
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+}
+
+function mergeQty(sources, mode) {
+  const values = sources.map((item) => Number(item.qty) || 0);
+  if (mode === 'sum') return values.reduce((a, b) => a + b, 0);
+  if (mode === 'min') {
+    // 수량이 비어 있는(0) 줄은 "가장 작은 값"으로 치지 않는다. 다 비어 있으면 0.
+    const positive = values.filter((v) => v > 0);
+    return positive.length ? Math.min(...positive) : 0;
+  }
+  return Math.max(...values);
+}
+
+// 시간을 읽을 수 있는 줄만 대상으로 한다. 하나도 없으면 맨 위 줄 값을 그대로 둔다.
+// 큰 값/작은 값은 그 줄의 원래 표기를 그대로 쓰고, 합산은 H:MM으로 다시 만든다.
+function mergeProcessingTime(sources, mode) {
+  const timed = sources
+    .map((item) => ({ raw: item.processingTime, minutes: timeToMinutes(item.processingTime) }))
+    .filter((t) => t.minutes !== null);
+  if (timed.length === 0) return sources[0].processingTime;
+  if (mode === 'sum') return minutesToHM(timed.reduce((sum, t) => sum + t.minutes, 0));
+  const pick = mode === 'min'
+    ? timed.reduce((best, t) => (t.minutes < best.minutes ? t : best))
+    : timed.reduce((best, t) => (t.minutes > best.minutes ? t : best));
+  return pick.raw;
+}
+
+// 합친 줄 하나의 수량/가공시간 방식을 바꾸고 그 줄만 다시 계산한다. index는 items 안의 자리.
+export function setGroupMergeOptions(items, index, patch) {
+  const item = items[index];
+  if (!isMergedItem(item)) return items;
+  const options = { ...LEGACY_MERGE_OPTIONS, ...item.mergeOptions, ...patch };
+  const result = [...items];
+  result[index] = buildRepresentative(item.mergedFrom, item.mergeId, options);
+  return result;
+}
+
 // 대표 항목은 언제나 현재 원본 목록에서 파생된다. 원본이 바뀌면(순서변경/빼내기/추가)
-// 반드시 다시 계산해야 '날짜=최신, 돈=합계, 수량=최대, 나머지=최상단' 기준이 유지된다.
-function buildRepresentative(sources, mergeId) {
+// 반드시 다시 계산해야 '날짜=최신, 돈=합계, 수량·가공시간=고른 방식, 나머지=최상단' 기준이 유지된다.
+function buildRepresentative(sources, mergeId, options) {
   const head = sources[0];
   const latest = sources.reduce((best, item) =>
     dateSortKey(item.date) > dateSortKey(best.date) ? item : best
@@ -104,20 +202,22 @@ function buildRepresentative(sources, mergeId) {
   return {
     ...stripMergeMeta(head),
     date: latest.date,
-    qty: sources.reduce((max, item) => Math.max(max, Number(item.qty) || 0), 0),
+    qty: mergeQty(sources, options.qty),
+    processingTime: mergeProcessingTime(sources, options.time),
     supply: sources.reduce((sum, item) => sum + (Number(item.supply) || 0), 0),
     tax: sources.reduce((sum, item) => sum + (Number(item.tax) || 0), 0),
     spec: mergeSpecs(sources),
     mergeId: mergeId || nextMergeId(),
+    mergeOptions: { qty: options.qty, time: options.time },
     mergedFrom: sources.map((s) => ({ ...s })),
   };
 }
 
 // 원본이 1개만 남으면 병합이 풀려 원래의 일반 항목으로 되돌아간다.
-function rebuildGroup(sources, mergeId) {
+function rebuildGroup(sources, mergeId, options) {
   if (sources.length === 0) return null;
   if (sources.length === 1) return stripMergeMeta(sources[0]);
-  return buildRepresentative(sources, mergeId);
+  return buildRepresentative(sources, mergeId, options);
 }
 
 // 항목을 '원본 목록' 관점으로 편다. 합쳐진 항목이면 그 원본들, 아니면 자기 자신 1개.
@@ -128,7 +228,7 @@ function toSources(item) {
 // 그룹의 원본 목록을 교체하고 대표 항목을 다시 계산한다.
 // 남는 원본이 1개 이상이면 배열 길이가 유지되므로 다른 인덱스가 밀리지 않는다.
 function withSources(items, parentIndex, nextSources) {
-  const rebuilt = rebuildGroup(nextSources, items[parentIndex]?.mergeId);
+  const rebuilt = rebuildGroup(nextSources, items[parentIndex]?.mergeId, items[parentIndex]?.mergeOptions || LEGACY_MERGE_OPTIONS);
   const result = [...items];
   if (rebuilt === null) result.splice(parentIndex, 1);
   else result[parentIndex] = rebuilt;
@@ -145,7 +245,9 @@ export function mergeItems(items, indices) {
   // 이미 합쳐진 항목을 다시 합칠 때 중첩되지 않도록 원본 단위로 펼쳐서 보관한다.
   const sources = targets.flatMap((i) => toSources(items[i]));
   const keptId = targets.map((i) => items[i].mergeId).find(Boolean);
-  const merged = buildRepresentative(sources, keptId);
+  // 이미 합쳐진 줄이 끼어 있으면 그 줄의 방식을 이어받고, 전부 새로 합치는 것이면 기본값을 쓴다.
+  const inherited = targets.map((i) => items[i].mergeOptions).find(Boolean);
+  const merged = buildRepresentative(sources, keptId, inherited || mergeOptions);
 
   const result = [];
   items.forEach((item, i) => {

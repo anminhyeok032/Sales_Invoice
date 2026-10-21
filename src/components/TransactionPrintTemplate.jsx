@@ -1,5 +1,5 @@
 import React, { useLayoutEffect, useRef, useState } from 'react';
-import { PRINT_ROWS_PER_PAGE } from '../lib/transactionItems';
+import { PRINT_ROWS_PER_PAGE, dailySumLabels } from '../lib/transactionItems';
 import { toDateKey } from '../lib/dateRange';
 import { useTransparentStamp } from '../lib/stampImage';
 import useStore from '../store';
@@ -85,26 +85,13 @@ const TransactionPrintTemplate = React.forwardRef(({ data, receiver, supplier, d
   // 예전 프로그램 도장(BMP)의 자홍색 배경을 투명하게
   const stampSrc = useTransparentStamp(supplier?.stamp);
 
-  const dailyInfo = {};
-  items.forEach((item, idx) => {
-    if (!item.date) return;
-    if (!dailyInfo[item.date]) {
-      dailyInfo[item.date] = { sum: 0, lastItemIndex: idx };
-    }
-    dailyInfo[item.date].sum += (Number(item.supply) || 0);
-    dailyInfo[item.date].lastItemIndex = idx;
-  });
-
+  // 일별 합계: 같은 날짜 묶음의 마지막 줄에만, 끝자리 0을 뗀 그날 공급가액 합계(dailySumLabels).
+  // 날짜는 묶음의 첫 줄에만 적혀 있고 나머지 줄은 비어 있을 수 있다.
+  const dailyLabels = showDailySum ? dailySumLabels(items) : [];
   const enhancedItems = items.map((item, idx) => {
-    const isLastOfDate = item.date && dailyInfo[item.date] && dailyInfo[item.date].lastItemIndex === idx;
-    let appendedNote = showNote ? (item.note || '') : '';
-    if (showDailySum && isLastOfDate) {
-      const sum = dailyInfo[item.date].sum;
-      if (sum > 0) {
-        const shortSum = sum / 10000;
-        appendedNote = appendedNote ? `${appendedNote} (${shortSum})` : `${shortSum}`;
-      }
-    }
+    const memo = showNote ? (item.note || '') : '';
+    const daily = dailyLabels[idx] || '';
+    const appendedNote = daily ? (memo ? `${memo} (${daily})` : daily) : memo;
     return { ...item, _appendedNote: appendedNote };
   });
 
@@ -149,8 +136,11 @@ const TransactionPrintTemplate = React.forwardRef(({ data, receiver, supplier, d
     const S = partyCells(supplier, true);
     const R = partyCells(receiver, false);
 
+    // 공급자 계좌(있을 때만): 테두리 밖 왼쪽 아래에 한 줄. 그만큼 칸 높이를 늘린다(.has-foot).
+    const account = String(supplier?.account || '').trim();
+
     return (
-      <div className={`statement ${type}`}>
+      <div className={`statement ${type}${account ? ' has-foot' : ''}`}>
         <div className="statement-head">
           <div className="statement-title">거래명세표</div>
           <div className="statement-subline">
@@ -253,6 +243,7 @@ const TransactionPrintTemplate = React.forwardRef(({ data, receiver, supplier, d
             </tbody>
           </table>
         </div>
+        {account && <div className="statement-foot st-ink">{account}</div>}
       </div>
     );
   };

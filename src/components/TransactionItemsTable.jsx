@@ -16,7 +16,11 @@ import {
   clearTaxes,
   insertItemAt,
   PRINT_ROWS_PER_PAGE,
+  MERGE_MODES,
+  setMergeOptions,
+  setGroupMergeOptions,
 } from '../lib/transactionItems';
+import useStore from '../store';
 
 const HIGHLIGHT = '#bfdbfe';
 
@@ -103,7 +107,18 @@ function TransactionItemsTable({
     });
   };
 
+  // 합칠 때 수량/가공시간을 정하는 방식(합산/큰 값/작은 값). 합치기·순서변경·빼내기 때마다 대표 줄을
+  // 다시 계산하므로, 계산 직전에 현재 설정을 넘긴다. 설정을 바꾸면 이미 합쳐 둔 줄도 바로 다시 계산한다.
+  const mergeOptions = useStore((s) => s.mergeOptions);
+  const updateMergeOptions = useStore((s) => s.setMergeOptions);
+  // 표 위의 선택은 "앞으로 새로 합칠 때"의 기본값이다. 이미 합친 줄은 그대로 두고, 그 줄을 펼쳐서 따로 고른다.
+  const changeMergeOption = (patch) => {
+    updateMergeOptions(patch);
+    setMergeOptions(patch);
+  };
+
   const handleDrop = (source, target) => {
+    setMergeOptions(mergeOptions);
     const fromSub = source.p != null;
 
     if (target.kind === 'row') {
@@ -150,7 +165,33 @@ function TransactionItemsTable({
       overflow: 'hidden',
     };
 
-    return item.mergedFrom.map((source, subIndex) => {
+    // 이 합침만의 수량/가공시간 방식. 바꾸면 이 줄만 다시 계산한다(parentIndex는 보이는 줄 안의 자리).
+    const groupOptions = { qty: 'max', time: 'max', ...item.mergeOptions };
+    const optionsRow = (
+      <tr key={`${item.mergeId}-opts`} style={{ backgroundColor: '#f1f5f9' }}>
+        <td colSpan={columns.length + 3} style={{ padding: '0.3rem 0.5rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem 0.75rem', flexWrap: 'wrap', fontSize: '0.8125rem', color: '#334155' }}>
+            <span style={{ fontWeight: 600 }}>이 합침의</span>
+            {[['qty', '수량'], ['time', '가공시간']].map(([key, label]) => (
+              <label key={key} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
+                {label}
+                <select
+                  className="input-field" style={{ width: '5.5rem', padding: '0.15rem 0.3rem' }}
+                  value={groupOptions[key]}
+                  onChange={(e) => applyToView((v) => setGroupMergeOptions(v, parentIndex, { [key]: e.target.value }))}
+                  title={`이 합침의 ${label}: 합산 / 가장 큰 값 / 가장 작은 값`}
+                >
+                  {MERGE_MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+                </select>
+              </label>
+            ))}
+            <span style={{ color: '#94a3b8' }}>금액·세액은 합산, 날짜는 가장 최근</span>
+          </div>
+        </td>
+      </tr>
+    );
+
+    return [optionsRow, ...item.mergedFrom.map((source, subIndex) => {
       const targeted = isTarget('sub', parentIndex, subIndex);
 
       return (
@@ -186,7 +227,7 @@ function TransactionItemsTable({
           <td />
         </tr>
       );
-    });
+    })];
   };
 
   const menuColumn = menu && ITEM_COLUMNS.find((c) => c.key === menu.key);
@@ -197,6 +238,26 @@ function TransactionItemsTable({
 
   return (
     <div>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: '0.25rem 0.75rem', flexWrap: 'wrap',
+        margin: '0 0 0.5rem', fontSize: '0.8125rem', color: '#334155',
+      }}>
+        <span style={{ fontWeight: 600 }} title="줄을 끌어 다른 줄의 이동 칸에 놓으면 합쳐집니다. 이미 합친 줄은 펼쳐서 따로 고릅니다">새로 합칠 때 기본</span>
+        {[['qty', '수량'], ['time', '가공시간']].map(([key, label]) => (
+          <label key={key} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
+            {label}
+            <select
+              className="input-field" style={{ width: '5.5rem', padding: '0.15rem 0.3rem' }}
+              value={mergeOptions?.[key] || 'max'}
+              onChange={(e) => changeMergeOption({ [key]: e.target.value })}
+              title={`합친 줄의 ${label}: 합산 / 가장 큰 값 / 가장 작은 값 (금액과 세액은 항상 합산)`}
+            >
+              {MERGE_MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+            </select>
+          </label>
+        ))}
+        <span style={{ color: '#94a3b8' }}>합친 줄을 펼치면 그 줄만 따로 고를 수 있습니다</span>
+      </div>
       {filtered && (
         <div style={{
           display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap',

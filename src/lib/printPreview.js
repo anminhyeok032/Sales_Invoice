@@ -26,6 +26,8 @@ function collectStyles() {
 
 const PREVIEW_CSS = `
   @page { size: A4; margin: 5mm; }
+  /* 인쇄할 때 브라우저 기본 본문 여백(8px)이 붙으면 한 장 높이가 2mm 늘어 다음 장으로 넘칠 수 있다. */
+  @media print { body { margin: 0; } }
   @media screen {
     body { margin: 0; background: #94a3b8; }
     .pv-bar {

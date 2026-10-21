@@ -14,7 +14,7 @@ function PrintOptions() {
       <span style={{ fontWeight: 600 }}>출력할 비고</span>
       <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', cursor: 'pointer' }}>
         <input type="checkbox" checked={showDailySum} onChange={(e) => setPrintOptions({ showDailySum: e.target.checked })} />
-        일별 합계 (그날 마지막 줄에 만원 단위)
+        일별 합계 (그날 마지막 줄, 끝자리 0 뺀 값)
       </label>
       <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', cursor: 'pointer' }}>
         <input type="checkbox" checked={showNote} onChange={(e) => setPrintOptions({ showNote: e.target.checked })} />

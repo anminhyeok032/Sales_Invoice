@@ -268,6 +268,11 @@ function CompanyManager() {
             <label className="input-label">주소</label>
             <input className="input-field" value={editing.address} onChange={e => handleMyCompChange('address', e.target.value)} />
           </div>
+          <div className="input-group" style={{ gridColumn: '1 / -1' }}>
+            <label className="input-label">계좌번호 (명세서 왼쪽 아래에 그대로 찍힘, 비워 두면 안 찍힘)</label>
+            <input className="input-field" placeholder="예: 은행 : 000000-00-000000 예금주"
+              value={editing.account || ''} onChange={e => handleMyCompChange('account', e.target.value)} />
+          </div>
         </div>
 
         <div className="input-group">

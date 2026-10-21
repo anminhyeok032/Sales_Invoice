@@ -9,7 +9,7 @@ import { filterItems, isFilterActive, filtersKey } from '../lib/itemTableView';
 import { writeTransactionsBackup } from '../lib/transactionExcelSync';
 import { resolveColumnMapping } from '../lib/excelSchema';
 import PrintOptions from './PrintOptions';
-import { applyItemChange } from '../lib/transactionItems';
+import { applyItemChange, minutesToHM } from '../lib/transactionItems';
 import { createItemForFilters } from '../lib/itemTableView';
 import { matchReceiver, receiverInfo } from '../lib/companyLookup';
 import TransactionItemsTable from './TransactionItemsTable';
@@ -61,13 +61,6 @@ const parseHM = (text) => {
   const m = String(text).trim().match(/^(\d+):(\d{1,2})$/);
   if (!m) return null;
   return Number(m[1]) * 60 + Number(m[2]);
-};
-
-const minutesToHM = (minutes) => {
-  const total = Math.round(minutes);
-  const h = Math.floor(total / 60);
-  const m = total % 60;
-  return `${h}:${String(m).padStart(2, '0')}`;
 };
 
 const formatProcessingTime = (raw, qty) => {

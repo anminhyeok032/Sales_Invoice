@@ -584,6 +584,17 @@ body.is-row-dragging * {
   box-sizing: border-box;
   color: var(--form);
 }
+/* 계좌 줄(.statement-foot)이 있으면 그만큼 높인다. 한 장 = 2 x 139.5mm + 구분선 약 6.3mm = 285.3mm로
+   A4에서 위아래 여백 5mm를 뺀 287mm 안에 들어간다. */
+.statement.has-foot { height: 139.5mm; }
+.statement-foot {
+  flex: none;
+  padding: 0.6mm 0 0 1mm;
+  font-size: 10px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+}
 .statement.receiver { --form: var(--print-blue); }
 .statement.supplier { --form: var(--print-red); }
 
@@ -698,6 +709,9 @@ body.is-row-dragging * {
 .st-items thead th { height: 5.6mm; }
 .st-items tbody td { height: 6.15mm; }
 .st-sum th, .st-sum td { height: 8.6mm; }
+/* 합계 줄(미수금·금액·세액·합계)은 항목명 칸과 값 칸 모두 그 보관용 양식 색(파랑/빨강)을
+   아주 연하게 섞은 색으로 칠한다. 인수자 칸은 칠하지 않는다. */
+.st-sum th:not(.st-receiver-sign), .st-sum td { background-color: color-mix(in srgb, var(--form) 10%, #fff); }
 .st-receiver-sign > span { display: inline-block; }
 .st-receiver-sign { text-align: left !important; }
 .st-receiver-sign > span + span { float: right; }
