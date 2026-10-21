@@ -23,10 +23,19 @@ jobs:
       - name: Rename build output for download
         run: cp dist/index.html dist/invoice-app.html
 
-      - name: Publish/update the "latest" release
+      # 기존 "latest" release를 고쳐 쓰기만 하면 태그는 처음 만든 커밋에 그대로 남고 게시 날짜도 안 바뀌어서,
+      # release 페이지에서는 옛 버전처럼 보이고 "Source code" 묶음도 옛 코드다. 매번 지우고(태그 포함)
+      # 이 커밋에 새로 만든다. 다운로드 주소(releases/latest/download/invoice-app.html)는 그대로다.
+      - name: Remove the previous "latest" release and tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release delete latest --cleanup-tag --yes --repo "$GITHUB_REPOSITORY" || true
+
+      - name: Publish the "latest" release at this commit
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
+          target_commitish: ${{ github.sha }}
           name: "최신 빌드 (${{ github.sha }})"
           make_latest: true
           files: dist/invoice-app.html
