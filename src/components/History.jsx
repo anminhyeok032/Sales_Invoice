@@ -1,20 +1,23 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
 import useStore, { resolveSupplier } from '../store';
 import { openPrintPreview } from '../lib/printPreview';
 import { useItemFilters } from '../hooks/useItemFilters';
 import { filterItems, isFilterActive, filtersKey } from '../lib/itemTableView';
 import TransactionPrintTemplate from './TransactionPrintTemplate';
-import { Printer, Trash2, Plus, Save, Link2, Unlink, DatabaseBackup } from 'lucide-react';
+import { Printer, Trash2, Plus, Save, Link2, Unlink, DatabaseBackup, Download, Upload, FileSpreadsheet } from 'lucide-react';
 import {
-  isFileSystemAccessSupported,
-  getConnectedHandle,
-  connectBackupFile,
-  disconnectBackupFile,
-  writeTransactionsBackup,
+  useJsonBackupStatus, connectJsonBackup, reconnectJsonBackup, disconnectJsonBackup,
+  downloadBackup, parseBackup, summarizeRestore, applyRestore,
+} from '../lib/jsonBackup';
+import {
+  useExcelBackupStatus, connectExcelBackup, reconnectExcelBackup, disconnectExcelBackup,
 } from '../lib/transactionExcelSync';
-import { applyItemChange, computeTotals } from '../lib/transactionItems';
+import { buildViewWorkbook, buildStatementWorkbook, downloadWorkbook, stamped } from '../lib/excelViewWriter';
+import { stampToPng } from '../lib/stampImage';
+import { applyItemChange } from '../lib/transactionItems';
 import { createItemForFilters } from '../lib/itemTableView';
-import { matchReceiver, receiverInfo } from '../lib/companyLookup';
+import { receiverInfo } from '../lib/companyLookup';
+import { listContext, summarizeForList, receiverMatchFor } from '../lib/statementView';
 import { parseLegacyImportFile, summarizeImport, mergeCompanies } from '../lib/legacyImport';
 import { toDateKey, isWithinRange } from '../lib/dateRange';
 import TransactionItemsTable from './TransactionItemsTable';
@@ -48,7 +51,6 @@ function History() {
   const {
     transactions, transactionsLoaded, lastSaved, companies, deleteTransaction, saveTransaction,
     importTransactions, setCompanies, setCompaniesDirty,
-    transactionExcelFileName, setTransactionExcelFileName,
   } = useStore();
   const [selectedTx, setSelectedTx] = useState(null);
   // 저장할 때 골랐던 공급자로 다시 찍는다. 예전 프로그램에서 가져온 내역처럼 기록이
@@ -60,19 +62,18 @@ function History() {
   // 공급받는자: 저장할 때 고른 거래처(receiverId). 이 기능 전에 저장돼 엑셀 이름('가나')만
   // 남아 있거나 그 거래처를 지웠으면, 자동 작성과 같은 방식으로 이름을 비교해 찾는다.
   const receiverAliases = useStore((state) => state.receiverAliases);
-  const receiverMatch = useMemo(() => {
-    if (!selectedTx) return null;
-    const auto = matchReceiver(companies, selectedTx.companyName, receiverAliases);
-    const saved = companies.find((c) => c.id === selectedTx.receiverId);
-    if (saved) return { ...auto, company: saved, how: 'saved', ambiguous: false };
-    if (selectedTx.receiverId === '') return { ...auto, company: null, how: 'saved', ambiguous: false };
-    return auto;
-  }, [selectedTx, companies, receiverAliases]);
+  const receiverMatch = useMemo(
+    () => (selectedTx ? receiverMatchFor(selectedTx, companies, receiverAliases) : null),
+    [selectedTx, companies, receiverAliases],
+  );
   const receiverBase = selectedTx && receiverInfo(receiverMatch.company, selectedTx.companyName);
   const receiverPatch = selectedTx && patchFor(selectedTx.receiverOverride, receiverMatch.company?.id ?? '');
   const printReceiver = selectedTx && applyOverride(receiverBase, receiverPatch);
   const printRef = useRef();
   const importInputRef = useRef();
+  const restoreInputRef = useRef();
+  const jsonBackup = useJsonBackupStatus();
+  const [jsonError, setJsonError] = useState('');
   const [importError, setImportError] = useState('');
   const [importNotice, setImportNotice] = useState('');
   const [fromDate, setFromDate] = useState('');
@@ -85,27 +86,10 @@ function History() {
   // 목록 한 줄에 보여줄 값. 기존 프로그램 목록처럼 작성일자 / 내용 / 상호명 / 금액 / 세액 / 합계.
   //  - 상호명: 엑셀 이름('가나')이 아니라 실제로 인쇄되는 공급받는자 상호
   //  - 내용: 첫 품목 + '외 N종' (기존 프로그램이 만들던 방식)
-  // 목록 전체(수천 건)를 도는 계산이라, 이름 비교(fuzzy)는 하지 않고 id/별칭/이름 일치만 본다.
+  // 엑셀 보기 파일의 '목록' 시트도 같은 함수(statementView.summarizeForList)를 쓴다.
   const rows = useMemo(() => {
-    const byId = new Map(companies.map((c) => [c.id, c]));
-    return transactions.map((tx) => {
-      const company = byId.get(tx.receiverId) || byId.get(receiverAliases[tx.companyName])
-        || companies.find((c) => c.name === tx.companyName);
-      const override = patchFor(tx.receiverOverride, company?.id ?? '');
-      const named = (tx.items || []).filter((i) => String(i.name || '').trim());
-      const totals = computeTotals(tx.items || []);
-      // 기존 DB에는 상호 앞에 공백이 붙은 것('  천 일 정 공 (주)')이 있다. 화면에서는 안 보이지만
-      // 정렬하면 맨 앞으로 튀어나오므로, 앞뒤 공백은 떼고 정렬할 때는 공백을 모두 무시한다.
-      const name = String(override?.name || company?.name || tx.companyName || '').trim();
-      return {
-        tx,
-        dateKey: toDateKey(tx.date),
-        name,
-        sortName: name.replace(/\s+/g, ''),
-        summary: named.length ? `${named[0].name.trim()}${named.length > 1 ? ` 외 ${named.length - 1}종` : ''}` : '',
-        ...totals,
-      };
-    });
+    const ctx = listContext(companies, receiverAliases);
+    return transactions.map((tx) => summarizeForList(tx, ctx));
   }, [transactions, companies, receiverAliases]);
 
   const yearOptions = useMemo(
@@ -188,55 +172,70 @@ function History() {
     setCompanySearch('');
   };
 
-  // --- Local excel backup of the saved transaction history (write-only) ---
-  const [backupStatus, setBackupStatus] = useState('checking'); // checking | unsupported | disconnected | connected
-  const [backupError, setBackupError] = useState('');
-
-  useEffect(() => {
-    if (!isFileSystemAccessSupported()) {
-      setBackupStatus('unsupported');
-      return;
-    }
-    (async () => {
-      const handle = await getConnectedHandle();
-      if (handle) {
-        setTransactionExcelFileName(handle.name);
-        setBackupStatus('connected');
-      } else {
-        setBackupStatus('disconnected');
-      }
-    })();
-  }, []);
-
-  const handleConnectBackup = async () => {
+  // --- 엑셀 보기 파일 (보기 전용 사본: 목록/품목/합친 원본/거래처/공급자) ---
+  // 연결해 두면 바뀔 때마다 자동으로 새로 쓴다(transactionExcelSync.js). 내려받기는 언제든.
+  const excelBackup = useExcelBackupStatus();
+  const [excelError, setExcelError] = useState('');
+  const runExcel = async (action) => {
+    setExcelError('');
     try {
-      const handle = await connectBackupFile();
-      setTransactionExcelFileName(handle.name);
-      setBackupStatus('connected');
-      await writeTransactionsBackup(useStore.getState().transactions);
-      setBackupError('');
+      await action();
     } catch (err) {
-      if (err.name !== 'AbortError') {
-        setBackupError('백업 파일 연결에 실패했습니다: ' + err.message);
-      }
+      if (err.name !== 'AbortError') setExcelError('엑셀: ' + err.message);
+    }
+  };
+  const handleExportExcel = () => runExcel(() =>
+    downloadWorkbook(buildViewWorkbook(useStore.getState()), stamped('거래명세서-보기', 'xlsx')));
+
+  // 고른 명세서 한 건을 인쇄 양식 모양 그대로 엑셀로(지금 출력되는 상태 = 필터·수정 반영).
+  const handleStatementExcel = async () => {
+    if (!selectedTx) return;
+    try {
+      const stampPng = await stampToPng(printSupplier?.stamp);
+      const wb = buildStatementWorkbook({
+        tx: selectedTx, items: printItems, supplier: printSupplier, receiver: printReceiver,
+        printOptions: useStore.getState().printOptions, stampPng,
+      });
+      const safeName = String(printReceiver?.name || selectedTx.companyName || '').replace(/[\\/:*?"<>|]/g, '_');
+      await downloadWorkbook(wb, `거래명세서_${safeName}_${String(selectedTx.date || '').replace(/[^0-9]/g, '')}.xlsx`);
+    } catch (err) {
+      window.alert('엑셀 양식을 만들지 못했습니다: ' + err.message);
     }
   };
 
-  const handleDisconnectBackup = async () => {
-    await disconnectBackupFile();
-    setTransactionExcelFileName('');
-    setBackupStatus('disconnected');
-    setBackupError('');
+  // --- JSON 백업 (앱 데이터를 그대로 담는 1차 사본) ---
+  const runJson = async (action) => {
+    setJsonError('');
+    try {
+      await action();
+    } catch (err) {
+      if (err.name !== 'AbortError') setJsonError(err.message);
+    }
   };
 
-  const backupNow = async () => {
-    if (backupStatus !== 'connected') return;
-    try {
-      await writeTransactionsBackup(useStore.getState().transactions);
-      setBackupError('');
-    } catch (err) {
-      setBackupError('백업 저장 중 오류가 발생했습니다: ' + err.message);
-    }
+  const handleRestoreFile = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    await runJson(async () => {
+      const backup = parseBackup(await file.text());
+      const s = summarizeRestore(backup, useStore.getState());
+      const lines = [
+        `${file.name} 에서 복원합니다.${backup.exportedAt ? ` (백업 시각 ${new Date(backup.exportedAt).toLocaleString()})` : ''}`,
+        '',
+        `거래명세서 ${backup.transactions.length.toLocaleString()}건`,
+        `  · 새로 추가: ${s.added.toLocaleString()}건`,
+        `  · 백업 내용으로 덮어씀: ${s.overwritten.toLocaleString()}건`,
+        `  · 이미 같음: ${s.unchanged.toLocaleString()}건`,
+        `  · 앱에만 있어서 그대로 둠: ${s.keptOnlyInApp.toLocaleString()}건`,
+        `거래처 ${s.newCompanies}곳, 공급자 ${s.newSuppliers}곳 추가 (이미 있는 것은 그대로 둡니다)`,
+        '',
+        '진행할까요?',
+      ];
+      if (!window.confirm(lines.join('\n'))) return;
+      applyRestore(backup);
+      setImportNotice(`JSON 백업에서 거래명세서 ${(s.added + s.overwritten).toLocaleString()}건을 복원했습니다.`);
+    });
   };
 
   // --- 기존 프로그램(Tradetax.gdb) 내역 가져오기 ---
@@ -279,7 +278,6 @@ function History() {
         `거래명세서 ${s.total.toLocaleString()}건을 가져왔습니다` +
         (s.newCompanies > 0 ? `, 거래처 ${s.newCompanies}곳 추가.` : '.')
       );
-      await backupNow();
     } catch (err) {
       setImportError('가져오기에 실패했습니다: ' + err.message);
     }
@@ -332,7 +330,6 @@ function History() {
     if (!itemsFiltered) {
       // 필터가 없으면 이 명세서를 그대로 갱신한다.
       saveTransaction(selectedTx);
-      backupNow();
       alert('수정된 내용이 안전하게 저장되었습니다!');
       return;
     }
@@ -342,7 +339,6 @@ function History() {
     // 같은 필터 조건으로 다시 저장하면 그 새 명세서가 갱신된다(store.saveTransaction의 viewKey).
     const { id: _original, ...rest } = selectedTx;   // eslint-disable-line no-unused-vars
     const savedId = saveTransaction({ ...rest, items: printItems, viewKey: filtersKey(itemFilters) });
-    backupNow();
     // 저장된 상태를 바로 열어 보여준다. 다른 명세서가 선택되므로 필터는 저절로 풀린다.
     const saved = useStore.getState().transactions.find((t) => t.id === savedId);
     if (saved) setSelectedTx(saved);
@@ -359,29 +355,72 @@ function History() {
         display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem',
         padding: '0.75rem', backgroundColor: '#f8fafc', borderRadius: '6px', flexWrap: 'wrap'
       }}>
-        {backupStatus === 'checking' && (
-          <span style={{ fontSize: '0.875rem', color: '#64748b' }}>엑셀 백업 상태 확인 중...</span>
-        )}
-        {backupStatus === 'unsupported' && (
-          <span style={{ fontSize: '0.875rem', color: '#64748b' }}>
-            이 브라우저는 로컬 엑셀 백업을 지원하지 않습니다 (Chrome 또는 Edge에서만 가능).
-          </span>
-        )}
-        {backupStatus === 'disconnected' && (
-          <>
-            <span style={{ fontSize: '0.875rem', color: '#64748b' }}>저장된 내역이 로컬 엑셀 파일로 백업되고 있지 않습니다.</span>
-            <button className="btn" onClick={handleConnectBackup}><Link2 size={16} /> 엑셀 백업 연결</button>
-          </>
-        )}
-        {backupStatus === 'connected' && (
-          <>
-            <span style={{ fontSize: '0.875rem', color: '#16a34a', fontWeight: 500 }}>
-              엑셀 백업됨: {transactionExcelFileName} (저장할 때마다 자동 갱신)
-            </span>
-            <button className="btn" onClick={handleDisconnectBackup}><Unlink size={16} /> 백업 해제</button>
-          </>
-        )}
-        {backupError && <span style={{ fontSize: '0.875rem', color: 'red', width: '100%' }}>{backupError}</span>}
+        {/* 엑셀 보기 파일: 앱 화면과 같은 값으로 만든 보기 전용 사본. 엑셀에서 고쳐도 앱에는 반영되지 않는다. */}
+        <div style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+          {excelBackup.state === 'unsupported' && (
+            <span style={{ fontSize: '0.875rem', color: '#64748b' }}>이 브라우저는 파일 자동 저장을 지원하지 않습니다 (Chrome 또는 Edge에서만 가능).</span>
+          )}
+          {excelBackup.state === 'disconnected' && (
+            <>
+              <span style={{ fontSize: '0.875rem', color: '#64748b' }}>엑셀 보기 파일이 연결되어 있지 않습니다.</span>
+              <button className="btn" onClick={() => runExcel(connectExcelBackup)}><Link2 size={16} /> 엑셀 보기 파일 연결</button>
+            </>
+          )}
+          {excelBackup.state === 'needs-permission' && (
+            <>
+              <span style={{ fontSize: '0.875rem', color: '#b45309' }}>엑셀 보기 파일({excelBackup.fileName})에 쓰려면 권한이 필요합니다.</span>
+              <button className="btn" onClick={() => runExcel(reconnectExcelBackup)}><Link2 size={16} /> 다시 연결</button>
+            </>
+          )}
+          {excelBackup.state === 'connected' && (
+            <>
+              <span style={{ fontSize: '0.875rem', color: '#16a34a', fontWeight: 500 }}>
+                엑셀 보기 파일: {excelBackup.fileName} (바뀔 때마다 자동 갱신{excelBackup.busy ? ' · 만드는 중…' : excelBackup.savedAt ? ` · 마지막 ${excelBackup.savedAt}` : ''})
+              </span>
+              <button className="btn" onClick={() => runExcel(disconnectExcelBackup)}><Unlink size={16} /> 해제</button>
+            </>
+          )}
+          <button className="btn" onClick={handleExportExcel} title="목록·품목·합친 원본·거래처·공급자 시트로 된 엑셀 파일을 내려받습니다 (보기 전용)">
+            <FileSpreadsheet size={16} /> 엑셀로 내보내기
+          </button>
+          {(excelError || excelBackup.error) && (
+            <span style={{ fontSize: '0.875rem', color: 'red', width: '100%' }}>{excelError || excelBackup.error}</span>
+          )}
+        </div>
+
+        {/* JSON 백업: 앱 데이터를 그대로 담는 1차 사본. 다른 PC·브라우저에서도 그대로 복원된다. */}
+        <div style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+          {jsonBackup.state === 'disconnected' && (
+            <>
+              <span style={{ fontSize: '0.875rem', color: '#b45309' }}>JSON 백업 파일이 연결되어 있지 않습니다 (내역은 이 브라우저에만 있음).</span>
+              <button className="btn" onClick={() => runJson(connectJsonBackup)}><Link2 size={16} /> JSON 백업 연결</button>
+            </>
+          )}
+          {jsonBackup.state === 'needs-permission' && (
+            <>
+              <span style={{ fontSize: '0.875rem', color: '#b45309' }}>JSON 백업({jsonBackup.fileName})에 쓰려면 권한이 필요합니다.</span>
+              <button className="btn" onClick={() => runJson(reconnectJsonBackup)}><Link2 size={16} /> 다시 연결</button>
+            </>
+          )}
+          {jsonBackup.state === 'connected' && (
+            <>
+              <span style={{ fontSize: '0.875rem', color: '#16a34a', fontWeight: 500 }}>
+                JSON 백업됨: {jsonBackup.fileName} (바뀔 때마다 자동 저장{jsonBackup.savedAt ? ` · 마지막 ${jsonBackup.savedAt}` : ''})
+              </span>
+              <button className="btn" onClick={() => runJson(disconnectJsonBackup)}><Unlink size={16} /> 해제</button>
+            </>
+          )}
+          <button className="btn" onClick={() => runJson(async () => downloadBackup())} title="지금 상태를 .json 파일로 내려받습니다">
+            <Download size={16} /> JSON 내려받기
+          </button>
+          <button className="btn" onClick={() => restoreInputRef.current?.click()} title="JSON 백업 파일에서 내역·거래처·공급자를 되살립니다">
+            <Upload size={16} /> JSON에서 복원
+          </button>
+          <input ref={restoreInputRef} type="file" accept="application/json,.json" onChange={handleRestoreFile} style={{ display: 'none' }} />
+          {(jsonError || jsonBackup.error) && (
+            <span style={{ fontSize: '0.875rem', color: 'red', width: '100%' }}>{jsonError || jsonBackup.error}</span>
+          )}
+        </div>
 
         <div style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
           <button className="btn" onClick={() => importInputRef.current?.click()}>
@@ -505,7 +544,6 @@ function History() {
                               if (!window.confirm(`${fmtDate(r.dateKey, r.tx.date)} ${r.name} 명세서를 삭제할까요?`)) return;
                               deleteTransaction(r.tx.id);
                               if (selectedTx?.id === r.tx.id) setSelectedTx(null);
-                              backupNow();
                             }}>
                             <Trash2 size={13} />
                           </button>
@@ -545,6 +583,10 @@ function History() {
               <button className="btn btn-primary" onClick={handlePrint} disabled={!selectedTx}
                 title="새 창에서 미리보기 (필터가 걸려 있으면 보이는 줄만 출력)">
                 <Printer size={16} /> 출력/PDF{itemsFiltered ? ` (${printItems.length}줄)` : ''}
+              </button>
+              <button className="btn" onClick={handleStatementExcel} disabled={!selectedTx}
+                title="이 명세서를 인쇄 양식 모양 그대로 엑셀 파일로 내려받습니다 (지금 출력되는 상태 그대로)">
+                <FileSpreadsheet size={16} /> 엑셀 양식
               </button>
             </div>
           </div>

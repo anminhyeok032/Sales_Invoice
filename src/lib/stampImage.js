@@ -38,6 +38,26 @@ function keyOutMagenta(src) {
   return cache.get(src);
 }
 
+// 엑셀에 넣을 도장: 엑셀은 PNG/JPEG만 받으므로(기존 프로그램 도장은 BMP) 자홍색을 투명하게 바꾼 뒤
+// 항상 PNG로 돌려준다. 'data:image/png;base64,...'
+export async function stampToPng(src) {
+  if (!src) return '';
+  const keyed = await keyOutMagenta(src);
+  if (keyed.startsWith('data:image/png')) return keyed;
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      canvas.getContext('2d').drawImage(img, 0, 0);
+      resolve(canvas.toDataURL('image/png'));
+    };
+    img.onerror = () => resolve('');
+    img.src = keyed;
+  });
+}
+
 // 도장 이미지 주소를 받아, 자홍색 배경을 투명하게 바꾼 주소를 돌려준다(바꾸는 동안에는 원본).
 export function useTransparentStamp(src) {
   const [result, setResult] = useState({ src, out: src });

@@ -6,7 +6,6 @@ import TransactionPrintTemplate from './TransactionPrintTemplate';
 import { openPrintPreview } from '../lib/printPreview';
 import { useItemFilters } from '../hooks/useItemFilters';
 import { filterItems, isFilterActive, filtersKey } from '../lib/itemTableView';
-import { writeTransactionsBackup } from '../lib/transactionExcelSync';
 import { resolveColumnMapping } from '../lib/excelSchema';
 import PrintOptions from './PrintOptions';
 import { applyItemChange, minutesToHM } from '../lib/transactionItems';
@@ -334,7 +333,6 @@ function NewTransaction() {
       // 같은 조건으로 다시 저장하면 그 명세서를 갱신한다(store.saveTransaction).
       viewKey: filtersKey(itemFilters),
     });
-    writeTransactionsBackup(useStore.getState().transactions).catch(err => console.error('엑셀 백업 저장 실패:', err));
     alert(itemsFiltered
       ? `${selectedCompany} 명세서를 저장했습니다. (필터 상태 그대로 ${printItems.length}줄, 숨긴 ${currentItems.length - printItems.length}줄은 제외)`
       : `${selectedCompany} 거래명세서가 로컬에 저장되었습니다!`);

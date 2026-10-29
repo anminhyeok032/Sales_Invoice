@@ -4,6 +4,8 @@ import History from './components/History';
 import CompanyManager from './components/CompanyManager';
 import { FileSpreadsheet, History as HistoryIcon, Building2 } from 'lucide-react';
 import useStore, { initTransactionPersistence } from './store';
+import { initJsonBackup } from './lib/jsonBackup';
+import { initExcelBackup } from './lib/transactionExcelSync';
 
 function App() {
   const [activeTab, setActiveTab] = useState('new');
@@ -13,9 +15,12 @@ function App() {
 
   // 저장된 내역은 localStorage가 아니라 IndexedDB에 있다. 앱이 뜨면 한 번 읽어온다.
   useEffect(() => {
-    initTransactionPersistence().catch((err) => {
-      console.error('저장된 내역을 불러오지 못했습니다:', err);
-    });
+    // JSON 백업·엑셀 보기 파일 자동 저장은 내역을 다 읽은 뒤에 켠다(빈 목록으로 파일을 덮지 않게).
+    initTransactionPersistence()
+      .then(() => Promise.all([initJsonBackup(), initExcelBackup()]))
+      .catch((err) => {
+        console.error('저장된 내역을 불러오지 못했습니다:', err);
+      });
   }, []);
 
   useEffect(() => {

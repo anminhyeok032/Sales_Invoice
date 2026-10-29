@@ -68,9 +68,10 @@ export function openPrintPreview(node, { title = '거래명세서', note = '' } 
 
   win.document.open();
   win.document.write(`<!doctype html>
-<html lang="ko">
+<html lang="ko" translate="no" class="notranslate">
 <head>
 <meta charset="utf-8">
+<meta name="google" content="notranslate">
 <title>${escapeHtml(title)}</title>
 ${collectStyles()}
 <style>${PREVIEW_CSS}</style>

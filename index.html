@@ -1,7 +1,13 @@
 <!doctype html>
-<html lang="en">
+<!--
+  한국어 페이지로 선언하고 자동 번역을 끈다. 예전에는 lang="en"이라 크롬이 "영어 페이지"로 보고 번역을 제안했고,
+  그 제안대로 한국어로 번역하면 이미 한국어인 글자가 다시 바뀌어 깨졌다.
+  lang="ko": 브라우저가 한국어 페이지로 인식 / translate="no"·notranslate: 번역 제안·자동 번역 끄기
+-->
+<html lang="ko" translate="no" class="notranslate">
   <head>
     <meta charset="UTF-8" />
+    <meta name="google" content="notranslate" />
     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>거래명세서 자동 관리</title>

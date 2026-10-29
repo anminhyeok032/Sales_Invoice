@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import { loadTransactions, saveTransactions } from './lib/transactionDb';
+import { loadTransactions, writeTransactionChanges, readTransactions } from './lib/transactionDb';
 
 export const EMPTY_SUPPLIER = {
   regNo: '', name: '', president: '', address: '', businessType: '', businessItem: '', stamp: '',
@@ -10,6 +10,10 @@ export const EMPTY_SUPPLIER = {
 
 // 선택자(useStore(selector))에서 쓰이므로 매번 새 객체를 만들면 안 된다.
 const FALLBACK_SUPPLIER = Object.freeze({ id: '', ...EMPTY_SUPPLIER });
+
+// 새 명세서 id. 예전에는 Date.now() 그대로라 같은 1/1000초에 두 건을 저장하면 id가 겹쳤다 —
+// 명세서를 한 건씩(id를 키로) 저장하므로 겹치면 한 건이 다른 건을 덮어 사라진다. 시각 뒤에 무작위 꼬리를 붙인다.
+const newTransactionId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
 const newSupplierId = () => `supplier-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 
@@ -27,12 +31,25 @@ export function resolveSupplier(state, id) {
 // 그 뒤의 저장도 계속 실패해서 "저장했는데 껐다 켜면 사라지는" 증상이 된다. 도장 사진과 읽어 둔 엑셀
 // 원본이 용량을 크게 차지한다. 실패하면 다시 만들 수 있는 엑셀 세션(읽은 원본/결과)을 빼고 한 번 더
 // 쓰고, 그래도 안 되면 조용히 넘기지 말고 알린다.
+//
+// 창(탭)이 여러 개일 때: zustand persist는 상태가 조금만 바뀌어도(저장 안 하는 값이어도) 이 창이 아는
+// 설정 전체를 통째로 다시 쓴다. 그래서 가공일지를 불러오기 전에 열어 둔 다른 창이 무언가를 하면(다른 창의
+// 명세서 저장을 받아 반영하는 것만으로도) 그 창의 옛 상태 — 가공일지 없음 — 로 덮어써서, 다음에 열면
+// 가공일지를 다시 불러와야 했다. 두 가지로 막는다:
+//   1) 이 창이 저장할 값을 실제로 바꾸지 않았으면(마지막으로 읽거나 쓴 값과 같으면) 쓰지 않는다.
+//   2) 다른 창이 저장소를 바꾸면(storage 이벤트) 이 창도 그 값을 다시 읽어 맞춘다(아래 rehydrate).
 const EXCEL_SESSION_KEYS = ['excelRawData', 'excelGroupedData', 'excelOverrides'];
 let warnedStorage = false;
+let lastKnownValue = null;   // 이 창이 마지막으로 저장소에서 읽었거나 쓴 값
 const safeStorage = {
-  getItem: (name) => localStorage.getItem(name),
+  getItem: (name) => {
+    lastKnownValue = localStorage.getItem(name);
+    return lastKnownValue;
+  },
   removeItem: (name) => localStorage.removeItem(name),
   setItem: (name, value) => {
+    if (value === lastKnownValue) return;   // 이 창에서는 바뀐 것이 없다 — 다른 창의 저장을 덮지 않는다
+    lastKnownValue = value;
     try {
       localStorage.setItem(name, value);
       return;
@@ -179,13 +196,13 @@ const useStore = create(
           if (existingIndex >= 0) {
             // Update existing
             const newTransactions = [...state.transactions];
-            const id = newTransactions[existingIndex].id || Date.now().toString();
+            const id = newTransactions[existingIndex].id || newTransactionId();
             newTransactions[existingIndex] = { ...newTransactions[existingIndex], ...transaction, id };
             savedId = id;
             return { transactions: newTransactions, lastSaved: { id, seq: (state.lastSaved?.seq || 0) + 1 } };
           }
           // Add new
-          savedId = Date.now().toString();
+          savedId = newTransactionId();
           return {
             transactions: [...state.transactions, { ...transaction, id: savedId }],
             lastSaved: { id: savedId, seq: (state.lastSaved?.seq || 0) + 1 },
@@ -248,9 +265,68 @@ const useStore = create(
   )
 );
 
-let writeTimer = null;
-let lastWritten = null;
+// --- 저장된 내역 <-> IndexedDB ---
+// 명세서 한 건씩 저장한다(transactionDb.js 참고). 상태의 목록이 바뀌면 직전에 저장한 것과 비교해서
+// 바뀐 명세서(객체가 달라진 것)만 쓰고, 없어진 명세서만 지운다. 상태는 항상 새 객체로 바꾸므로
+// (불변 갱신) 객체가 같으면 내용도 같다.
+//
+// 창(탭)을 여러 개 열어 두어도 서로의 저장을 지우지 않도록, 저장이 끝나면 BroadcastChannel로 다른
+// 창에 "이 명세서들이 바뀌었다/지워졌다"를 알리고, 알림을 받은 창은 저장소에서 그 명세서만 다시 읽어
+// 자기 목록에 반영한다. 같은 명세서를 두 창에서 동시에 고치면 나중에 저장한 쪽이 남는다.
+let persistedById = new Map();   // id -> 마지막으로 저장소와 맞춘 명세서 객체
+let lastSeenList = null;         // 마지막으로 처리한 상태의 목록(같으면 건너뜀)
+let writeChain = Promise.resolve();
+let writeErrorShown = false;
 let initPromise = null;
+const channel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('거래명세서-저장내역') : null;
+
+const keyOf = (t) => String(t.id);
+
+function persistChanges(list) {
+  const puts = [];
+  const seen = new Set();
+  list.forEach((t) => {
+    const k = keyOf(t);
+    seen.add(k);
+    if (persistedById.get(k) !== t) puts.push(t);
+  });
+  const deleteIds = [...persistedById.keys()].filter((k) => !seen.has(k));
+  if (puts.length === 0 && deleteIds.length === 0) return;
+
+  persistedById = new Map(list.map((t) => [keyOf(t), t]));
+  // 순서대로 쓴다(앞의 쓰기가 끝난 뒤 다음 쓰기). 한 번 실패해도 다음 쓰기는 계속한다.
+  writeChain = writeChain
+    .then(() => writeTransactionChanges(puts, deleteIds))
+    .then(() => {
+      channel?.postMessage({ changed: puts.map(keyOf), deleted: deleteIds });
+    })
+    .catch((err) => {
+      console.error('저장된 내역을 IndexedDB에 쓰지 못했습니다:', err);
+      if (!writeErrorShown) {
+        writeErrorShown = true;
+        window.alert('저장된 내역을 브라우저 저장소에 쓰지 못했습니다. 창을 닫기 전에 JSON 백업을 내려받아 두세요.\n(' + err.message + ')');
+      }
+    });
+}
+
+// 다른 창이 저장한 것을 이 창의 목록에 반영한다. 반영 결과를 "저장소와 같은 상태"로 기록해 두어
+// 이 창이 그것을 다시 쓰지 않게 한다.
+async function applyRemoteChanges({ changed = [], deleted = [] }) {
+  const fresh = await readTransactions(changed);
+  const freshById = new Map(fresh.map((t) => [keyOf(t), t]));
+  const gone = new Set([...deleted, ...changed.filter((k) => !freshById.has(k))]);
+  const current = useStore.getState().transactions;
+  const next = current
+    .filter((t) => !gone.has(keyOf(t)))
+    .map((t) => freshById.get(keyOf(t)) || t);
+  const known = new Set(next.map(keyOf));
+  fresh.forEach((t) => { if (!known.has(keyOf(t))) next.push(t); });
+
+  gone.forEach((k) => persistedById.delete(k));
+  freshById.forEach((t, k) => persistedById.set(k, t));
+  lastSeenList = next;
+  useStore.setState({ transactions: next });
+}
 
 // 앱 시작 시 한 번 호출. IndexedDB에서 저장된 내역을 읽어오고, 이후 변경분을
 // 계속 IndexedDB로 넘긴다. StrictMode에서 effect가 두 번 도는 등 여러 번
@@ -262,31 +338,45 @@ export function initTransactionPersistence() {
 
 async function doInitTransactionPersistence() {
   const stored = await loadTransactions();
+  // 저장소를 읽는 동안(앱을 막 연 순간) 이미 저장한 것이 있으면 버리지 않고 합친다.
+  const pending = useStore.getState().transactions;
 
   if (stored === null) {
     // 이 버전으로 올라온 뒤 첫 실행. 예전에는 내역이 localStorage에 있었고
     // persist가 방금 그걸 state로 복원해 놨으므로, 그대로 IndexedDB로 옮긴다.
     // (partialize 때문에 다음 저장부터 localStorage에서는 사라진다.)
-    const existing = useStore.getState().transactions;
-    if (existing.length) await saveTransactions(existing);
-    lastWritten = existing;
+    persistedById = new Map();
+    persistChanges(pending);
+    lastSeenList = pending;
     useStore.setState({ transactionsLoaded: true });
   } else {
-    lastWritten = stored;
-    useStore.setState({ transactions: stored, transactionsLoaded: true });
+    persistedById = new Map(stored.map((t) => [keyOf(t), t]));
+    const pendingIds = new Set(pending.map(keyOf));
+    const merged = [...stored.filter((t) => !pendingIds.has(keyOf(t))), ...pending];
+    lastSeenList = merged;
+    useStore.setState({ transactions: merged, transactionsLoaded: true });
+    persistChanges(merged);   // pending이 있었으면 그것만 쓴다
   }
 
   useStore.subscribe((state) => {
-    if (state.transactions === lastWritten) return;
-    lastWritten = state.transactions;
-    // 항목 하나 고칠 때마다 3MB를 다시 쓰지 않도록 잠깐 모아서 쓴다.
-    clearTimeout(writeTimer);
-    const snapshot = state.transactions;
-    writeTimer = setTimeout(() => {
-      saveTransactions(snapshot).catch((err) => {
-        console.error('저장된 내역을 IndexedDB에 쓰지 못했습니다:', err);
-      });
-    }, 400);
+    if (state.transactions === lastSeenList) return;
+    lastSeenList = state.transactions;
+    persistChanges(state.transactions);
+  });
+
+  if (channel) {
+    channel.onmessage = (event) => {
+      applyRemoteChanges(event.data || {}).catch((err) => console.error('다른 창의 저장을 반영하지 못했습니다:', err));
+    };
+  }
+}
+
+// 다른 창이 설정(가공일지 작업, 거래처, 공급자 등)을 바꾸면 이 창도 다시 읽어 같은 상태로 맞춘다.
+// (key가 null이면 다른 창이 저장소를 통째로 비운 것)
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (event) => {
+    if (event.storageArea !== localStorage) return;
+    if (event.key === 'invoice-storage' || event.key === null) useStore.persist.rehydrate();
   });
 }
 
