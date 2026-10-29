@@ -249,26 +249,30 @@ function TransactionItemsTable({
 
     // 이 합침만의 수량/가공시간 방식. 바꾸면 이 줄만 다시 계산한다(parentIndex는 보이는 줄 안의 자리).
     const groupOptions = { qty: 'max', time: 'max', ...item.mergeOptions };
+    // 고르는 칸은 대표 줄의 수량·가공시간 칸 바로 아래에 둔다 — 무엇을 바꾸는지 바로 보이게.
+    // 수량과 가공시간은 표에서 붙어 있는 두 칸이다(ITEM_COLUMNS 순서).
+    const qtyCol = columns.findIndex((c) => c.key === 'qty');
+    const modeSelect = (key, label) => (
+      <td style={{ padding: '0.15rem 1px' }}>
+        <select
+          className="input-field merge-mode-select"
+          value={groupOptions[key]}
+          onChange={(e) => applyToView((v) => setGroupMergeOptions(v, parentIndex, { [key]: e.target.value }))}
+          title={`이 합침의 ${label}: 합산 / 가장 큰 값 / 가장 작은 값`}
+        >
+          {MERGE_MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+        </select>
+      </td>
+    );
     const optionsRow = (
-      <tr key={`${item.mergeId}-opts`} style={{ backgroundColor: '#f1f5f9' }}>
-        <td colSpan={spanAll} style={{ padding: '0.3rem 0.5rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem 0.75rem', flexWrap: 'wrap', fontSize: '0.8125rem', color: '#334155' }}>
-            <span style={{ fontWeight: 600 }}>이 합침의</span>
-            {[['qty', '수량'], ['time', '가공시간']].map(([key, label]) => (
-              <label key={key} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
-                {label}
-                <select
-                  className="input-field" style={{ width: '5.5rem', padding: '0.15rem 0.3rem' }}
-                  value={groupOptions[key]}
-                  onChange={(e) => applyToView((v) => setGroupMergeOptions(v, parentIndex, { [key]: e.target.value }))}
-                  title={`이 합침의 ${label}: 합산 / 가장 큰 값 / 가장 작은 값`}
-                >
-                  {MERGE_MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
-                </select>
-              </label>
-            ))}
-            <span style={{ color: '#94a3b8' }}>금액·세액은 합산, 날짜는 가장 최근</span>
-          </div>
+      <tr key={`${item.mergeId}-opts`} style={{ backgroundColor: '#f1f5f9', fontSize: '0.75rem', color: '#334155' }}>
+        <td colSpan={2 + qtyCol} style={{ padding: '0.15rem 0.4rem', textAlign: 'right', fontWeight: 600 }}>
+          이 합침의 수량·가공시간 →
+        </td>
+        {modeSelect('qty', '수량')}
+        {modeSelect('time', '가공시간')}
+        <td colSpan={spanAll - (2 + qtyCol) - 2} style={{ padding: '0.15rem 0.4rem', color: '#94a3b8' }}>
+          금액·세액은 합산, 날짜는 가장 최근
         </td>
       </tr>
     );

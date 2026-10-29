@@ -42,7 +42,9 @@ function FitText({ children, maxFontSize = 11, minFontSize = 6, lines = 1 }) {
           fontSize: `${fontSize}px`,
           lineHeight: LINE_HEIGHT,
           display: multi ? 'block' : 'inline-block',
-          whiteSpace: multi ? 'normal' : 'nowrap',
+          // 앞쪽 공백을 지우지 않는다: 윗줄과 같다는 표시로 앞에 띄어쓰기를 넣고 '"'를 찍는 경우가 있어서
+          // 화면에서 넣은 공백 그대로 찍는다(pre). 여러 줄 칸은 공백을 지키면서 줄을 바꾼다(pre-wrap).
+          whiteSpace: multi ? 'pre-wrap' : 'pre',
           wordBreak: multi ? 'keep-all' : undefined,
           overflowWrap: multi ? 'anywhere' : undefined,
           maxWidth: '100%',

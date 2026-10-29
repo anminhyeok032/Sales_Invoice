@@ -578,6 +578,11 @@ body.is-row-dragging * {
 
 .statement {
   --form: var(--print-blue);
+  /* 양식 안의 모든 가는 선(칸 사이 선, 제목·No. 밑줄)의 최소 굵기. 크롬은 테두리를 1px(약 0.26mm)보다
+     얇게 그리지 않으므로, 1px 선을 이 비율로 줄여서 그린다: 1px × 0.756 ≈ 0.2mm.
+     0.13mm(반 줄)로 했을 때 실제 프린터(잉크젯, 색 선)에서 일부 선이 흐리거나 빠졌다 — 0.2mm 아래로 내리지 않는다.
+     더 굵게: 1에 가깝게(1 = 0.26mm). */
+  --st-line-scale: 0.756;
   height: 136mm;
   display: flex;
   flex-direction: column;
@@ -619,14 +624,14 @@ body.is-row-dragging * {
   content: '';
   display: block;
   width: 68mm;
-  height: 0.85mm;
   margin: 1.1mm auto 0;
-  /* 두 줄을 가는 선(아래 '가는 선' 설명)으로: 2배 크기로 그린 뒤 위아래로 반 줄인다. */
-  height: 1.7mm;
-  margin-bottom: -0.85mm;
+  /* 두 줄(간격 0.85mm)을 최소 굵기 선으로: 1/비율 크기로 그린 뒤 위아래로 비율만큼 줄인다.
+     줄인 만큼 남는 자리는 아래 여백을 빼서 맞춘다. */
+  height: calc(0.85mm / var(--st-line-scale));
+  margin-bottom: calc(0.85mm - 0.85mm / var(--st-line-scale));
   border-top: 1px solid var(--form);
   border-bottom: 1px solid var(--form);
-  transform: scaleY(0.5);
+  transform: scaleY(var(--st-line-scale));
   transform-origin: 0 0;
 }
 .statement-subline {
@@ -644,14 +649,14 @@ body.is-row-dragging * {
   position: relative;
 }
 .statement-no::after {
-  /* 밑줄도 가는 선 */
+  /* 밑줄도 최소 굵기 선 */
   content: '';
   position: absolute;
   left: 0;
   bottom: 0;
   width: 100%;
   border-bottom: 1px solid var(--form);
-  transform: scaleY(0.5);
+  transform: scaleY(var(--st-line-scale));
   transform-origin: 0 100%;
 }
 .statement-subtitle { font-size: 10.5px; }
@@ -673,10 +678,12 @@ body.is-row-dragging * {
   border-collapse: collapse;
   table-layout: fixed;
 }
-/* 칸 사이 선은 가는 선(약 0.13mm)으로 그린다. 크롬은 인쇄할 때도 테두리를 1px(약 0.26mm)보다 얇게 그리지
-   않아서(0.25mm·0.5px·0.1mm 모두 같은 굵기로 찍힘) border 굵기만 줄여서는 안 된다. 그래서 칸마다 2배 크기의
-   덮개(::after)에 1px 선(오른쪽·아래)을 그리고 반으로 줄인다 — PDF·인쇄에서 선이 정말 반 굵기가 된다.
-   각 칸은 오른쪽·아래 선만 그리고, 맨 왼쪽·위·오른쪽·아래는 바깥 굵은 테두리(.statement-frame)가 맡는다. */
+/* 칸 사이 선은 최소 굵기 선(--st-line-scale, 약 0.2mm)으로 그린다. 크롬은 인쇄할 때도 테두리를 1px(약 0.26mm)보다
+   얇게 그리지 않아서(0.25mm·0.5px·0.1mm 모두 같은 굵기로 찍힘) border 굵기만 줄여서는 안 된다. 그래서 칸마다
+   1/비율 크기의 덮개(::after)에 1px 선(오른쪽·아래)을 그리고 비율만큼 줄인다 — PDF·인쇄에서 선이 정말 그 굵기가 된다.
+   각 칸은 오른쪽·아래 선만 그리고, 맨 왼쪽·위·오른쪽·아래는 바깥 굵은 테두리(.statement-frame)가 맡는다.
+   선은 칸의 맨 끝에 걸쳐 있어서, 칸이 넘치는 부분을 잘라 내면(overflow: hidden) 칸 폭의 소수점 자리에 따라
+   선이 잘려 안 찍히는 칸이 생긴다. 그래서 칸은 자르지 않고(clip + 여유), 글자 자르기는 FitText 안에서 한다. */
 .statement-frame th, .statement-frame td {
   border: none;
   position: relative;
@@ -684,7 +691,8 @@ body.is-row-dragging * {
   font-size: 10.5px;
   font-weight: normal;
   white-space: nowrap;
-  overflow: hidden;
+  overflow: clip;
+  overflow-clip-margin: 0.5mm;
   vertical-align: middle;
 }
 .statement-frame th {
@@ -698,12 +706,12 @@ body.is-row-dragging * {
   position: absolute;
   left: 0;
   top: 0;
-  width: 200%;
-  height: 200%;
+  width: calc(100% / var(--st-line-scale));
+  height: calc(100% / var(--st-line-scale));
   box-sizing: border-box;
   border-right: 1px solid var(--form);
   border-bottom: 1px solid var(--form);
-  transform: scale(0.5);
+  transform: scale(var(--st-line-scale));
   transform-origin: 0 0;
   pointer-events: none;
 }
@@ -797,3 +805,10 @@ body.is-row-dragging * {
   z-index: 5;
 }
 .row-selection-bar .btn { display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.15rem 0.5rem; font-size: 0.8125rem; }
+
+/* 합친 줄을 펼쳤을 때 수량·가공시간 칸 바로 아래의 방식 고르기(좁은 칸에 들어가게 작게) */
+.data-table--compact .merge-mode-select {
+  width: 100%;
+  padding: 0.1rem 0;
+  font-size: 0.6875rem;
+}
