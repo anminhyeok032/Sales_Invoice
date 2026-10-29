@@ -111,7 +111,8 @@ const useStore = create(
       setPrintOptions: (patch) => set((state) => ({ printOptions: { ...state.printOptions, ...patch } })),
 
       // 여러 줄을 합칠 때 수량/가공시간을 정하는 방식: 'sum'(합산) | 'max'(큰 값) | 'min'(작은 값)
-      mergeOptions: { qty: 'max', time: 'max' },
+      // 기본은 둘 다 합산(v2부터).
+      mergeOptions: { qty: 'sum', time: 'sum' },
       setMergeOptions: (patch) => set((state) => ({ mergeOptions: { ...state.mergeOptions, ...patch } })),
 
       // 가공일지 엑셀의 업체 이름 -> 거래처 id. 사용자가 직접 골라 준 것만 남긴다.
@@ -241,17 +242,20 @@ const useStore = create(
       name: 'invoice-storage', // local storage key name
       storage: createJSONStorage(() => safeStorage),
       // v1: 공급자가 myCompany 하나에서 suppliers 목록으로 바뀌었다.
-      version: 1,
+      // v2: 새로 합칠 때의 기본 방식을 수량·가공시간 모두 합산으로 통일(예전 기본값 '큰 값'으로 저장된 설정도 바꾼다).
+      version: 2,
       migrate: (persisted, version) => {
-        if (version < 1 && persisted && persisted.myCompany) {
-          const { myCompany, ...rest } = persisted;
-          return {
+        let next = persisted;
+        if (version < 1 && next && next.myCompany) {
+          const { myCompany, ...rest } = next;
+          next = {
             ...rest,
             suppliers: [{ ...EMPTY_SUPPLIER, ...myCompany, id: 'supplier-1' }],
             defaultSupplierId: 'supplier-1',
           };
         }
-        return persisted;
+        if (version < 2 && next) next = { ...next, mergeOptions: { qty: 'sum', time: 'sum' } };
+        return next;
       },
       // 저장된 내역은 용량이 커서 localStorage에 넣지 않는다 (transactionDb.js).
       partialize: (state) => {

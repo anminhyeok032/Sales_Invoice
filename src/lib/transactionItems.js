@@ -5,7 +5,7 @@ export function createEmptyItem() {
 }
 
 // 인쇄 양식은 한 장에 12줄씩 찍는다(기존 프로그램 양식과 같은 줄 수). 넘치면 여러 장이 되고
-// 장마다 그 장의 합계가 찍힌다.
+// 장마다 명세서 전체의 합계가 찍힌다(장별 합계는 거래 내역 수정 화면에만 보인다).
 export const PRINT_ROWS_PER_PAGE = 12;
 
 // 인쇄 양식과 같은 계산: 금액 = Σ공급가액, 세액 = Σ세액, 합계 = 금액 + 세액.
@@ -47,6 +47,29 @@ function formatDailySum(sum) {
   return Number.isInteger(sum) ? String(sum).replace(/0+$/, '') : String(sum);
 }
 
+// 품목 날짜에서 연도 빼고 보이기. 가공일지에서 읽은 날짜는 'yy/mm/dd'로 연도까지 저장한다 — 합칠 때
+// '가장 최근 날짜'를 고르거나 기간을 비교하려면 연도가 필요해서 저장은 그대로 두고, 화면과 인쇄에서만 'mm/dd'로 보인다.
+// 연도가 없는 값(기존 프로그램의 '10.01', 같은 날 표시 '"' 등)은 그대로.
+const ITEM_DATE_WITH_YEAR = /^(\d{2}|\d{4})[/.-](\d{1,2}[/.-].*)$/;
+export function itemDateLabel(date) {
+  const text = String(date ?? '');
+  const m = text.match(ITEM_DATE_WITH_YEAR);
+  return m ? m[2] : text;
+}
+
+export function itemDateYear(date) {
+  const m = String(date ?? '').match(ITEM_DATE_WITH_YEAR);
+  return m ? m[1] : '';
+}
+
+// 연도 없이 입력한 날짜('10/05')에 연도를 다시 붙여 저장할 값. 연도는 그 줄이 원래 갖던 연도, 없으면 year.
+// 'mm/'처럼 월로 시작하는 입력에만 붙인다(빈 칸, '"' 같은 표시, 연도까지 친 값은 그대로).
+export function itemDateFromInput(typed, prevDate, year) {
+  const y = itemDateYear(prevDate) || year;
+  if (!y || ITEM_DATE_WITH_YEAR.test(typed) || !/^\d{1,2}[/.-]/.test(typed)) return typed;
+  return `${y}/${typed}`;
+}
+
 // index 자리에 빈 줄을 하나 끼워 넣은 새 배열. index가 0이면 맨 위, items.length면 맨 끝.
 // 합쳐진 항목이 있어도 최상위 목록 기준이라 그룹 통째로 앞/뒤에 들어간다(그룹 안으로는 안 들어감).
 export function insertItemAt(items, index, newItem = createEmptyItem()) {
@@ -75,6 +98,36 @@ export function applyItemChange(items, index, field, value) {
 // 모든 줄의 세액을 0으로. (예전 버전이 자동으로 넣어 둔 10% 세액을 한 번에 지울 때)
 export function clearTaxes(items) {
   return items.map((item) => (Number(item.tax) ? { ...item, tax: 0 } : item));
+}
+
+// 여러 줄 복사: positions(배열 안 자리들)의 줄을 복제해서, 고른 줄 중 마지막 줄 바로 아래에 같은 순서로 넣는다.
+// 합쳐진 줄은 원본까지 통째로 복제하고 새 mergeId를 준다(같은 id가 둘이면 펼치기·끌기가 섞인다).
+// 반환: { items: 새 배열, copies: 넣은 복제본들 }
+export function copyItems(items, positions) {
+  const sorted = [...new Set(positions)].filter((p) => p >= 0 && p < items.length).sort((a, b) => a - b);
+  if (sorted.length === 0) return { items, copies: [] };
+  const copies = sorted.map((p) => {
+    const item = items[p];
+    if (!isMergedItem(item)) return { ...item };
+    return { ...item, mergeId: nextMergeId(), mergedFrom: item.mergedFrom.map((s) => ({ ...s })) };
+  });
+  const next = [...items];
+  next.splice(sorted[sorted.length - 1] + 1, 0, ...copies);
+  return { items: next, copies };
+}
+
+// 여러 줄 한꺼번에 옮기기: positions의 줄들을 (원래 순서대로 붙여서) target 줄 자리로 옮긴다.
+// target이 고른 줄들보다 아래면 target 줄 아래에, 위면 target 줄 위에 들어간다 — 한 줄 옮기기(reorderItems)와 같은 느낌.
+// target이 고른 줄 중 하나면 그대로.
+export function moveItemsTo(items, positions, target) {
+  const chosen = new Set(positions);
+  if (chosen.size === 0 || chosen.has(target) || target < 0 || target >= items.length) return items;
+  const block = items.filter((_, i) => chosen.has(i));
+  const rest = items.filter((_, i) => !chosen.has(i));
+  const anchor = rest.indexOf(items[target]);
+  const at = target > Math.min(...chosen) ? anchor + 1 : anchor;
+  rest.splice(at, 0, ...block);
+  return rest;
 }
 
 export function reorderItems(items, fromIndex, toIndex) {
@@ -136,7 +189,7 @@ export const MERGE_MODES = [
   { value: 'max', label: '큰 값' },
   { value: 'min', label: '작은 값' },
 ];
-let mergeOptions = { qty: 'max', time: 'max' };
+let mergeOptions = { qty: 'sum', time: 'sum' };
 export function setMergeOptions(options) {
   mergeOptions = { ...mergeOptions, ...options };
 }

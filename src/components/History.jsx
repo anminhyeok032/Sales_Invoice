@@ -47,6 +47,20 @@ function periodOf(fromKey, toKey) {
   return null;
 }
 
+// 연도/분기 -> 기간 칸 글자(yy/mm/dd). quarter 0이면 그해 전체.
+function periodRange(year, quarter) {
+  const [m1, m2] = quarter ? [quarter * 3 - 2, quarter * 3] : [1, 12];
+  const last = new Date(Number(year), m2, 0).getDate();
+  const yy = String(year).slice(2);
+  return [`${yy}/${pad2(m1)}/01`, `${yy}/${pad2(m2)}/${pad2(last)}`];
+}
+
+// 처음 열었을 때의 기간: 이 PC 시계 기준 올해의 지금 분기.
+function currentPeriodRange() {
+  const now = new Date();
+  return periodRange(now.getFullYear(), Math.floor(now.getMonth() / 3) + 1);
+}
+
 function History() {
   const {
     transactions, transactionsLoaded, lastSaved, companies, deleteTransaction, saveTransaction,
@@ -76,8 +90,8 @@ function History() {
   const [jsonError, setJsonError] = useState('');
   const [importError, setImportError] = useState('');
   const [importNotice, setImportNotice] = useState('');
-  const [fromDate, setFromDate] = useState('');
-  const [toDate, setToDate] = useState('');
+  const [fromDate, setFromDate] = useState(() => currentPeriodRange()[0]);
+  const [toDate, setToDate] = useState(() => currentPeriodRange()[1]);
   const [companyFilter, setCompanyFilter] = useState('');
   const [companySearch, setCompanySearch] = useState('');   // 상호명에 들어 있는 글자로 찾기
   const [sortKey, setSortKey] = useState('date');   // date | name | amount
@@ -93,7 +107,8 @@ function History() {
   }, [transactions, companies, receiverAliases]);
 
   const yearOptions = useMemo(
-    () => [...new Set(rows.map((r) => r.dateKey.slice(0, 4)).filter(Boolean))].sort().reverse(),
+    // 올해는 내역이 아직 없어도 넣는다 — 처음 기간이 올해라서 목록에 없으면 '직접 입력'으로 보인다.
+    () => [...new Set([String(new Date().getFullYear()), ...rows.map((r) => r.dateKey.slice(0, 4)).filter(Boolean)])].sort().reverse(),
     [rows]
   );
 
@@ -158,16 +173,16 @@ function History() {
   const period = periodOf(fromKey, toKey);
   const setPeriod = (year, quarter) => {
     if (!year) { setFromDate(''); setToDate(''); return; }
-    const [m1, m2] = quarter ? [quarter * 3 - 2, quarter * 3] : [1, 12];
-    const last = new Date(Number(year), m2, 0).getDate();
-    const yy = year.slice(2);
-    setFromDate(`${yy}.${pad2(m1)}.01`);
-    setToDate(`${yy}.${pad2(m2)}.${pad2(last)}`);
+    const [from, to] = periodRange(year, quarter);
+    setFromDate(from);
+    setToDate(to);
   };
 
+  // 초기화는 처음 열었을 때와 같은 상태(올해 지금 분기)로. 전체를 보려면 연도에서 '전체'를 고른다.
   const resetFilters = () => {
-    setFromDate('');
-    setToDate('');
+    const [from, to] = currentPeriodRange();
+    setFromDate(from);
+    setToDate(to);
     setCompanyFilter('');
     setCompanySearch('');
   };
@@ -627,7 +642,7 @@ function History() {
                 onItemChange={handleItemChange}
                 onItemsChange={setItems}
                 onDeleteItem={deleteItem}
-                dateColWidth="52px"
+                dateColWidth="46px"
                 filters={itemFilters}
                 onFiltersChange={setItemFilters}
               />

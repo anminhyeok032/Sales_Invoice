@@ -1,6 +1,6 @@
 import React, { useLayoutEffect, useRef, useState } from 'react';
-import { PRINT_ROWS_PER_PAGE } from '../lib/transactionItems';
-import { printedNotes } from '../lib/statementView';
+import { PRINT_ROWS_PER_PAGE, itemDateLabel, computeTotals } from '../lib/transactionItems';
+import { printedNotes, printedUnit } from '../lib/statementView';
 import { INFO_COLS_MM, INFO_TOTAL_MM, ITEM_COLS, SUM_COLS, formatStatementDate } from '../lib/printLayout';
 import { useTransparentStamp } from '../lib/stampImage';
 import useStore from '../store';
@@ -77,6 +77,9 @@ const TransactionPrintTemplate = React.forwardRef(({ data, receiver, supplier, d
   }
   if (pages.length === 0) pages.push([]);
 
+  // 합계 줄은 여러 장이어도 장마다 명세서 전체의 합계를 찍는다(장별 합계는 거래 내역 수정 화면에서만 보인다).
+  const totals = computeTotals(items);
+
   const formatCurrency = (val) => (val ? Number(val).toLocaleString() : '');
   const printedDate = formatStatementDate(date);
 
@@ -104,10 +107,6 @@ const TransactionPrintTemplate = React.forwardRef(({ data, receiver, supplier, d
     const displayItems = [...pageItems];
     while (displayItems.length < MAX_ROWS) displayItems.push(EMPTY_ROW);
 
-    // 장마다 그 장에 찍힌 줄의 합계
-    const pageSupply = pageItems.reduce((sum, item) => sum + (Number(item.supply) || 0), 0);
-    const pageTax = pageItems.reduce((sum, item) => sum + (Number(item.tax) || 0), 0);
-    const pageTotal = pageSupply + pageTax;
 
     const S = partyCells(supplier, true);
     const R = partyCells(receiver, false);
@@ -187,10 +186,10 @@ const TransactionPrintTemplate = React.forwardRef(({ data, receiver, supplier, d
                 const showDate = !(index > 0 && item.date && item.date === displayItems[index - 1].date);
                 return (
                   <tr key={index}>
-                    <td className="text-center"><FitText>{showDate ? item.date : ''}</FitText></td>
+                    <td className="text-center"><FitText>{showDate ? itemDateLabel(item.date) : ''}</FitText></td>
                     <td><FitText>{item.name}</FitText></td>
                     <td><FitText>{item.spec}</FitText></td>
-                    <td className="text-center"><FitText>{item.unit}</FitText></td>
+                    <td className="text-center"><FitText>{printedUnit(item.unit)}</FitText></td>
                     <td className="text-right"><FitText>{formatCurrency(item.qty)}</FitText></td>
                     <td className="text-right"><FitText>{formatCurrency(item.price)}</FitText></td>
                     <td className="text-right"><FitText>{formatCurrency(item.supply)}</FitText></td>
@@ -209,11 +208,11 @@ const TransactionPrintTemplate = React.forwardRef(({ data, receiver, supplier, d
                 <th>미수금</th>
                 <td />
                 <th>금액</th>
-                <td className="text-right"><FitText>{formatCurrency(pageSupply)}</FitText></td>
+                <td className="text-right"><FitText>{formatCurrency(totals.supply)}</FitText></td>
                 <th>세액</th>
-                <td className="text-right"><FitText>{formatCurrency(pageTax)}</FitText></td>
+                <td className="text-right"><FitText>{formatCurrency(totals.tax)}</FitText></td>
                 <th>합계</th>
-                <td className="text-right"><FitText>{formatCurrency(pageTotal)}</FitText></td>
+                <td className="text-right"><FitText>{formatCurrency(totals.total)}</FitText></td>
                 <th className="st-receiver-sign"><span>인수자</span><span>(인)</span></th>
               </tr>
             </tbody>

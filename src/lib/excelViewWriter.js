@@ -6,8 +6,8 @@
 // 모두 보기 전용 사본이다. 엑셀에서 고친 내용은 앱으로 돌아오지 않는다.
 import ExcelJS from 'exceljs';
 import { buildExcelView, MERGE_MODE_LABEL } from './excelView';
-import { PRINT_ROWS_PER_PAGE } from './transactionItems';
-import { printedNotes } from './statementView';
+import { PRINT_ROWS_PER_PAGE, itemDateLabel, computeTotals } from './transactionItems';
+import { printedNotes, printedUnit } from './statementView';
 import { HALF_COLS_MM, ITEM_COLS, SUM_COLS, formatStatementDate } from './printLayout';
 
 const READ_ONLY_NOTE = '보기 전용 — 여기서 고쳐도 앱에 반영되지 않습니다. 원본은 앱과 JSON 백업입니다.';
@@ -338,10 +338,10 @@ export function buildStatementWorkbook({ tx, items, supplier, receiver, printOpt
       const prev = pageItems[k - 1];
       const showDate = !(k > 0 && it.date && prev && it.date === prev.date);
       const row = newRow(6.15);
-      put(row, grid.items[0], showDate ? (it.date || '') : '', { align: 'center', border: b });
+      put(row, grid.items[0], showDate ? itemDateLabel(it.date) : '', { align: 'center', border: b });
       put(row, grid.items[1], it.name || '', { border: b });
       put(row, grid.items[2], it.spec || '', { border: b });
-      put(row, grid.items[3], it.unit || '', { align: 'center', border: b });
+      put(row, grid.items[3], printedUnit(it.unit), { align: 'center', border: b });
       put(row, grid.items[4], money(it.qty), { align: 'right', border: b, numFmt: MONEY });
       put(row, grid.items[5], money(it.price), { align: 'right', border: b, numFmt: MONEY });
       put(row, grid.items[6], money(it.supply), { align: 'right', border: b, numFmt: MONEY });
@@ -349,9 +349,8 @@ export function buildStatementWorkbook({ tx, items, supplier, receiver, printOpt
       put(row, grid.items[8], textOrNumber(it._note || ''), { border: b });
     }
 
-    // 합계 줄 (인수자 칸만 색 없음)
-    const supply = pageItems.reduce((a, it) => a + (Number(it.supply) || 0), 0);
-    const tax = pageItems.reduce((a, it) => a + (Number(it.tax) || 0), 0);
+    // 합계 줄 (인수자 칸만 색 없음). 여러 장이어도 장마다 명세서 전체의 합계 — 인쇄 양식과 같다.
+    const { supply, tax } = computeTotals(items);
     const sr = newRow(8.6);
     const fill = SUM_FILL[type];
     const sumCells = ['미수금', null, '금액', supply || null, '세액', tax || null, '합계', (supply + tax) || null];

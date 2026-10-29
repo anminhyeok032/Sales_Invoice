@@ -621,8 +621,13 @@ body.is-row-dragging * {
   width: 68mm;
   height: 0.85mm;
   margin: 1.1mm auto 0;
-  border-top: 0.3mm solid var(--form);
-  border-bottom: 0.3mm solid var(--form);
+  /* 두 줄을 가는 선(아래 '가는 선' 설명)으로: 2배 크기로 그린 뒤 위아래로 반 줄인다. */
+  height: 1.7mm;
+  margin-bottom: -0.85mm;
+  border-top: 1px solid var(--form);
+  border-bottom: 1px solid var(--form);
+  transform: scaleY(0.5);
+  transform-origin: 0 0;
 }
 .statement-subline {
   display: grid;
@@ -635,8 +640,19 @@ body.is-row-dragging * {
   width: 30mm;
   font-size: 14px;
   font-weight: bold;
-  border-bottom: 0.3mm solid var(--form);
   line-height: 1.1;
+  position: relative;
+}
+.statement-no::after {
+  /* 밑줄도 가는 선 */
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  border-bottom: 1px solid var(--form);
+  transform: scaleY(0.5);
+  transform-origin: 0 100%;
 }
 .statement-subtitle { font-size: 10.5px; }
 .statement-date {
@@ -657,8 +673,13 @@ body.is-row-dragging * {
   border-collapse: collapse;
   table-layout: fixed;
 }
+/* 칸 사이 선은 가는 선(약 0.13mm)으로 그린다. 크롬은 인쇄할 때도 테두리를 1px(약 0.26mm)보다 얇게 그리지
+   않아서(0.25mm·0.5px·0.1mm 모두 같은 굵기로 찍힘) border 굵기만 줄여서는 안 된다. 그래서 칸마다 2배 크기의
+   덮개(::after)에 1px 선(오른쪽·아래)을 그리고 반으로 줄인다 — PDF·인쇄에서 선이 정말 반 굵기가 된다.
+   각 칸은 오른쪽·아래 선만 그리고, 맨 왼쪽·위·오른쪽·아래는 바깥 굵은 테두리(.statement-frame)가 맡는다. */
 .statement-frame th, .statement-frame td {
-  border: 0.25mm solid var(--form);
+  border: none;
+  position: relative;
   padding: 0 1mm;
   font-size: 10.5px;
   font-weight: normal;
@@ -672,11 +693,24 @@ body.is-row-dragging * {
 }
 .statement-frame td { color: #000; }
 
+.statement-frame th::after, .statement-frame td::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 200%;
+  height: 200%;
+  box-sizing: border-box;
+  border-right: 1px solid var(--form);
+  border-bottom: 1px solid var(--form);
+  transform: scale(0.5);
+  transform-origin: 0 0;
+  pointer-events: none;
+}
+
 /* 바깥 굵은 테두리와 겹치는 선은 지운다 */
-.statement-frame table tr > :first-child { border-left: none; }
-.statement-frame table tr > :last-child { border-right: none; }
-.st-info tr:first-child > * { border-top: none; }
-.st-sum tr:last-child > * { border-bottom: none; }
+.statement-frame table tr > :last-child::after { border-right: none; }
+.st-sum tr:last-child > *::after { border-bottom: none; }
 
 .st-info tr > * { height: 7.8mm; }
 .st-vertical {
@@ -724,3 +758,42 @@ body.is-row-dragging * {
 .text-center {
   text-align: center !important;
 }
+
+/* 거래 내역 수정 표: No 칸의 번호가 곧 줄 선택 체크칸 */
+.row-check {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  background: #fff;
+  color: #64748b;
+  font-size: 0.75rem;
+  cursor: pointer;
+  user-select: none;
+}
+.row-check:hover { border-color: #2563eb; color: #1d4ed8; }
+.row-check input { position: absolute; opacity: 0; width: 0; height: 0; margin: 0; }
+.row-check:focus-within { outline: 2px solid #93c5fd; outline-offset: 1px; }
+.row-check.is-checked { background: #2563eb; border-color: #2563eb; color: #fff; font-weight: 600; }
+
+/* 줄을 선택했을 때 표 위에 붙는 막대(복사·삭제·해제) */
+.row-selection-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem 0.6rem;
+  flex-wrap: wrap;
+  margin: 0 0 0.5rem;
+  padding: 0.35rem 0.6rem;
+  border-radius: 6px;
+  background: #eef2ff;
+  border: 1px solid #c7d2fe;
+  font-size: 0.8125rem;
+  color: #3730a3;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+.row-selection-bar .btn { display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.15rem 0.5rem; font-size: 0.8125rem; }

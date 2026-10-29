@@ -55,7 +55,17 @@ export function printedSupplier(state, tx) {
 
 // ---------- 인쇄되는 비고 ----------
 // 출력 설정(품목 비고 메모 / 일별 합계)에 따라 각 줄의 비고 칸에 찍히는 글자.
+// 거래 내역 수정에서 그 줄의 비고를 직접 고쳤으면(item.printNote, 빈 글자도 포함) 자동 값 대신 그것을 찍는다.
+// 단 출력 설정을 둘 다 끄면 비고 칸은 비운다 — 끈 상태에서 고친 값만 몰래 찍히지 않게.
 export function printedNotes(items, printOptions = {}) {
+  const { showNote = true, showDailySum = true } = printOptions || {};
+  const auto = autoNotes(items, { showNote, showDailySum });
+  if (!showNote && !showDailySum) return auto;
+  return items.map((item, i) => (item.printNote != null ? String(item.printNote) : auto[i]));
+}
+
+// 직접 고친 값을 빼고 출력 설정만으로 정해지는 비고. 편집표에서 "자동 값"으로 보여 줄 때도 쓴다.
+export function autoNotes(items, printOptions = {}) {
   const { showNote = true, showDailySum = true } = printOptions || {};
   const daily = showDailySum ? dailySumLabels(items) : [];
   return items.map((item, i) => {
@@ -63,6 +73,12 @@ export function printedNotes(items, printOptions = {}) {
     const d = daily[i] || '';
     return d ? (memo ? `${memo} (${d})` : d) : memo;
   });
+}
+
+// 인쇄되는 단위. 거의 모든 줄이 EA라서 EA는 찍지 않고, 다른 단위(기존 프로그램에서 온 값 등)만 찍는다.
+export function printedUnit(unit) {
+  const u = String(unit ?? '').trim();
+  return u.toUpperCase() === 'EA' ? '' : u;
 }
 
 // 명세서가 어디서 왔는지.

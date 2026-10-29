@@ -36,7 +36,8 @@ const NC_LOG_FIELD_DEFS = [
 // 읽은 결과는 브라우저에 저장돼 남아 있어서, 코드를 고쳐도 파일을 다시 읽기 전에는 옛 결과가 그대로
 // 보인다. 저장된 결과의 버전(excelParserVersion)이 이 값보다 낮으면 옛 방식으로 읽은 것이다.
 //   2: 품목에 '코어 및 전극'과 구분을 붙임 / 업로드하면 '데이터시트'가 아니라 월 시트를 연다
-const NC_PARSER_VERSION = 2;
+//   3: 띄어쓰기만 다른 업체 이름('ABC'와 '  ABC')을 한 업체로 묶음
+const NC_PARSER_VERSION = 3;
 
 // 업로드한 통합문서에서 처음에 열 시트. 가공일지에는 월 시트(1월~12월) 앞에 입력 선택지를 적어 둔
 // '데이터시트' 같은 보조 시트가 있을 수 있다. 맨 첫 시트를 그냥 열면 그 보조 시트가 가공일지 데이터로
@@ -196,15 +197,20 @@ function NewTransaction() {
     });
 
     const newGroupedData = {};
+    // 같은 업체인데 앞뒤나 중간 띄어쓰기만 다른 이름('ABC', '  ABC', 'A BC')은 한 업체로 묶는다.
+    // 띄어쓰기를 모두 뺀 글자로 비교하고, 화면에는 처음 나온 이름(앞뒤 공백 제거, 연속 공백은 한 칸)을 쓴다.
+    const nameByKey = new Map();
 
     for (let i = dataStartRow; i < json.length; i++) {
       const row = json[i];
       if (!row || row.length === 0) continue;
 
       const rawDate = columnMap.date != null ? row[columnMap.date] : undefined;
-      const companyName = columnMap.company != null ? row[columnMap.company] : undefined;
-
-      if (!companyName) continue;
+      const rawCompany = columnMap.company != null ? row[columnMap.company] : undefined;
+      const companyKey = String(rawCompany ?? '').replace(/\s+/g, '');
+      if (!companyKey) continue;
+      if (!nameByKey.has(companyKey)) nameByKey.set(companyKey, String(rawCompany).replace(/\s+/g, ' ').trim());
+      const companyName = nameByKey.get(companyKey);
 
       const moldNo = (columnMap.moldNo != null && row[columnMap.moldNo]) || '';
       const newOrMod = (columnMap.newOrMod != null && row[columnMap.newOrMod]) || '';
@@ -485,7 +491,7 @@ function NewTransaction() {
               onItemChange={handleItemChange}
               onItemsChange={setCurrentItems}
               onDeleteItem={deleteItem}
-              dateColWidth="76px"
+              dateColWidth="46px"
               filters={itemFilters}
               onFiltersChange={setItemFilters}
             />

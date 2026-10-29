@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight, GripVertical, Trash2, Unlink, Filter, Plus } from 'lucide-react';
+import { ChevronDown, ChevronRight, GripVertical, Trash2, Unlink, Filter, Plus, Copy, X } from 'lucide-react';
 import { useDragReorder } from '../hooks/useDragReorder';
 import ColumnFilterMenu from './ColumnFilterMenu';
+import FitInput from './FitInput';
 import { ITEM_COLUMNS, filterItems, isFilterActive, sortItemsBy, applyToVisible, createItemForFilters } from '../lib/itemTableView';
 import {
   reorderItems,
@@ -19,10 +20,18 @@ import {
   MERGE_MODES,
   setMergeOptions,
   setGroupMergeOptions,
+  itemDateLabel,
+  itemDateYear,
+  itemDateFromInput,
+  copyItems,
+  moveItemsTo,
 } from '../lib/transactionItems';
+import { autoNotes } from '../lib/statementView';
 import useStore from '../store';
 
 const HIGHLIGHT = '#bfdbfe';
+const SELECTED_BG = '#e0e7ff';
+const NO_SELECTION = new Set();
 
 // 세로 화면(폭 약 700px)에서도 가로 스크롤 없이 한 화면에 다 들어가게 짠 폭.
 // 짧은 값만 들어가는 칸(구분은 거의 '신작'/'수정', 수량은 한두 자리, 가공시간은 H:MM)은
@@ -33,6 +42,8 @@ const HIGHLIGHT = '#bfdbfe';
 const COL_WIDTH = {
   newOrMod: '44px', qty: '44px', processingTime: '50px',
   spec: '16%', price: '66px', supply: '72px', tax: '62px',
+  printNote: '58px', // 비고(출력 설정을 켰을 때만) — 일별 합계 같은 짧은 값
+
   no: '30px',        // 현재 목록에서 몇 번째 줄인지
   actions: '46px',   // 줄 넣기(+) · 삭제(휴지통) · (합쳐진 줄이면) 합치기 해제
 };
@@ -40,7 +51,7 @@ const COL_WIDTH = {
 // filters/onFiltersChange: 컬럼 필터 상태. 부모가 들고 있다(useItemFilters) — 출력이 지금 보이는
 // 줄만 찍어야 해서 부모도 같은 필터를 알아야 한다.
 function TransactionItemsTable({
-  items, onItemChange, onItemsChange, onDeleteItem, dateColWidth = '80px',
+  items, onItemChange, onItemsChange, onDeleteItem, dateColWidth = '46px',
   filters, onFiltersChange,
 }) {
   // 펼침 상태는 인덱스가 아니라 mergeId로 잡는다. 순서변경/빼내기로 인덱스는 계속 바뀐다.
@@ -59,11 +70,71 @@ function TransactionItemsTable({
   const filtered = isFilterActive(filters);
   const visibleRows = filterItems(items, filters);
 
+  // 비고 칸: 출력 설정(일별 합계 / 품목 비고 메모)을 하나라도 켜면 공급가액 옆에 열린다. 출력에 찍힐 값을
+  // 보여 주고, 고치면 그 줄만 고친 값(printNote)이 찍힌다. 자동 값은 출력과 같이 지금 보이는 줄 기준이다.
+  const printOptions = useStore((s) => s.printOptions);
+  const noteVisible = Boolean(printOptions?.showDailySum ?? true) || Boolean(printOptions?.showNote ?? true);
+  const autoNoteList = noteVisible ? autoNotes(visibleRows.map((r) => r.item), printOptions) : [];
+  const spanAll = columns.length + 3 + (noteVisible ? 1 : 0);
+
+  // 날짜 칸은 연도 없이 'mm/dd'만 보이고 고친다. 저장할 때 그 줄의 연도를 다시 붙이는데, 연도가 없는 줄(새 줄 등)은
+  // 이 명세서의 다른 줄 연도, 그것도 없으면 올해를 쓴다.
+  const fallbackYear = items.map((it) => itemDateYear(it.date)).find(Boolean)
+    || String(new Date().getFullYear()).slice(2);
+
   // 필터를 걸어도 순서변경/합치기/빼내기/정렬은 그대로 된다. 보이는 줄만 모아서 그 안에서 바꾸고,
   // 숨긴 줄은 제자리에 둔다(applyToVisible). 끌기의 위치 번호(p, i)는 전체 목록이 아니라
   // "보이는 줄 안에서의 순서"다. 필터가 없으면 보이는 줄이 곧 전체라서 예전과 똑같다.
   const visibleIndexes = visibleRows.map((r) => r.index);
   const applyToView = (transform) => onItemsChange(applyToVisible(items, visibleIndexes, transform));
+
+  // 여러 줄 선택(No 칸의 번호 체크). 선택은 원래 목록의 자리(index)로 들고 있다. 줄 수가 바뀌는 다른 작업
+  // (줄 넣기·삭제·합치기 등) 뒤에는 자리가 어긋나므로 선택을 버린다 — forLength가 지금 줄 수와 다르면 선택 없음.
+  // 복사·함께 옮기기는 끝난 뒤 옮긴(복사한) 줄들을 다시 선택해 둔다.
+  const [selection, setSelection] = useState({ set: NO_SELECTION, forLength: -1, anchor: null });
+  const selected = selection.forLength === items.length ? selection.set : NO_SELECTION;
+  const selectedVis = visibleRows.flatMap((r, vi) => (selected.has(r.index) ? [vi] : []));
+  const clearSelection = () => setSelection({ set: NO_SELECTION, forLength: -1, anchor: null });
+  // Shift+클릭이면 마지막으로 누른 줄부터 이 줄까지(보이는 줄 기준) 모두 선택.
+  const toggleSelect = (vi, shift) => {
+    const next = new Set(selected);
+    const index = visibleRows[vi].index;
+    if (shift && selection.anchor != null && selection.anchor < visibleRows.length) {
+      const [a, b] = [Math.min(selection.anchor, vi), Math.max(selection.anchor, vi)];
+      for (let k = a; k <= b; k += 1) next.add(visibleRows[k].index);
+    } else if (next.has(index)) {
+      next.delete(index);
+    } else {
+      next.add(index);
+    }
+    setSelection({ set: next, forLength: items.length, anchor: vi });
+  };
+  const toggleSelectAll = () => {
+    if (selectedVis.length === visibleRows.length && visibleRows.length > 0) clearSelection();
+    else setSelection({ set: new Set(visibleIndexes), forLength: items.length, anchor: null });
+  };
+  // 보이는 줄에 바꾸기를 적용하고, transform이 돌려준 keep(줄 객체들)을 새 목록에서 찾아 선택으로 남긴다.
+  const applyToViewAndSelect = (transform) => {
+    let keep = [];
+    const next = applyToVisible(items, visibleIndexes, (v) => {
+      const result = transform(v);
+      keep = result.keep;
+      return result.items;
+    });
+    onItemsChange(next);
+    const refs = new Set(keep);
+    const set = new Set(next.flatMap((it, i) => (refs.has(it) ? [i] : [])));
+    setSelection({ set: set.size ? set : NO_SELECTION, forLength: set.size ? next.length : -1, anchor: null });
+  };
+  const copySelected = () => applyToViewAndSelect((v) => {
+    const { items: next, copies } = copyItems(v, selectedVis);
+    return { items: next, keep: copies };
+  });
+  const deleteSelected = () => {
+    if (!window.confirm(`선택한 ${selectedVis.length}줄을 삭제할까요?`)) return;
+    const drop = new Set(selectedVis);
+    applyToViewAndSelect((v) => ({ items: v.filter((_, i) => !drop.has(i)), keep: [] }));
+  };
 
   const setColumnFilter = (key, selected) => onFiltersChange((prev) => {
     const next = { ...prev };
@@ -82,6 +153,7 @@ function TransactionItemsTable({
   // 넣자마자 숨겨진다. pendingFocus는 원래 목록의 자리이고, 화면에서는 보이는 줄 중 몇 번째인지로 바꿔 찾는다.
   const pendingFocus = useRef(null);
   const insertRow = (index) => {
+    clearSelection();
     pendingFocus.current = index;
     onItemsChange(insertItemAt(items, index, createItemForFilters(filters)));
   };
@@ -120,6 +192,16 @@ function TransactionItemsTable({
   const handleDrop = (source, target) => {
     setMergeOptions(mergeOptions);
     const fromSub = source.p != null;
+
+    // 선택한 여러 줄을 함께 끌었으면 놓은 줄 자리로 한꺼번에 옮긴다(이동 칸에 놓아도 합치지 않고 옮긴다).
+    if (source.group) {
+      if (target.kind === 'sub') return;
+      return applyToViewAndSelect((v) => ({
+        items: moveItemsTo(v, source.group, target.i),
+        keep: source.group.map((p) => v[p]),
+      }));
+    }
+    clearSelection();
 
     if (target.kind === 'row') {
       if (fromSub) return applyToView((v) => extractGroupSource(v, source.p, source.i, target.i));
@@ -169,7 +251,7 @@ function TransactionItemsTable({
     const groupOptions = { qty: 'max', time: 'max', ...item.mergeOptions };
     const optionsRow = (
       <tr key={`${item.mergeId}-opts`} style={{ backgroundColor: '#f1f5f9' }}>
-        <td colSpan={columns.length + 3} style={{ padding: '0.3rem 0.5rem' }}>
+        <td colSpan={spanAll} style={{ padding: '0.3rem 0.5rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem 0.75rem', flexWrap: 'wrap', fontSize: '0.8125rem', color: '#334155' }}>
             <span style={{ fontWeight: 600 }}>이 합침의</span>
             {[['qty', '수량'], ['time', '가공시간']].map(([key, label]) => (
@@ -215,7 +297,7 @@ function TransactionItemsTable({
               <GripVertical size={12} />
             </div>
           </td>
-          <td style={cell}>{source.date}</td>
+          <td style={cell}>{itemDateLabel(source.date)}</td>
           <td style={cell}>{source.name}</td>
           <td style={cell}>{source.spec}</td>
           <td style={cell}>{source.newOrMod || ''}</td>
@@ -223,6 +305,7 @@ function TransactionItemsTable({
           <td style={cell}>{source.processingTime || ''}</td>
           <td style={{ ...cell, textAlign: 'right' }}>{source.price ? Number(source.price).toLocaleString() : ''}</td>
           <td style={{ ...cell, textAlign: 'right' }}>{Number(source.supply || 0).toLocaleString()}</td>
+          {noteVisible && <td />}
           {taxVisible && <td style={{ ...cell, textAlign: 'right' }}>{source.tax ? Number(source.tax).toLocaleString() : ''}</td>}
           <td />
         </tr>
@@ -236,6 +319,27 @@ function TransactionItemsTable({
   const printPages = Math.ceil(visibleRows.length / PRINT_ROWS_PER_PAGE);
   const won = (n) => `₩${n.toLocaleString()}`;
 
+  // 장마다의 합계 줄(화면 확인용). 인쇄는 PRINT_ROWS_PER_PAGE줄씩 한 장인데, 인쇄물의 합계 칸에는 장마다 전체 합계가
+  // 찍히므로 장별 합계는 여기서만 본다. 그 장의 마지막 줄 아래에 두고 빨간 점선으로 장을 나눈다. 금액은 공급가액(세액) 칸 아래에 맞춘다.
+  const supplyCol = columns.findIndex((c) => c.key === 'supply');
+  const renderPageTotal = (page) => {
+    const pageRows = visibleRows.slice((page - 1) * PRINT_ROWS_PER_PAGE, page * PRINT_ROWS_PER_PAGE);
+    const t = computeTotals(pageRows.map((r) => r.item));
+    const first = (page - 1) * PRINT_ROWS_PER_PAGE + 1;
+    const style = { backgroundColor: '#fef2f2', color: '#991b1b', fontSize: '0.75rem', fontWeight: 600, padding: '0.2rem 0.3rem' };
+    return (
+      <tr key={`page-total-${page}`} className="page-total-row" style={{ borderBottom: '2px dashed #dc2626' }}>
+        <td colSpan={2 + supplyCol} style={{ ...style, textAlign: 'right' }}>
+          {page}장 합계 ({first}~{first + pageRows.length - 1}줄)
+        </td>
+        <td style={{ ...style, textAlign: 'right' }}>{t.supply.toLocaleString()}</td>
+        {noteVisible && <td style={style} />}
+        {taxVisible && <td style={{ ...style, textAlign: 'right' }}>{t.tax ? t.tax.toLocaleString() : ''}</td>}
+        <td style={{ ...style, textAlign: 'right' }} title="이 장의 합계금액 (공급가액 + 세액)">{t.tax ? t.total.toLocaleString() : ''}</td>
+      </tr>
+    );
+  };
+
   return (
     <div>
       <div style={{
@@ -248,7 +352,7 @@ function TransactionItemsTable({
             {label}
             <select
               className="input-field" style={{ width: '5.5rem', padding: '0.15rem 0.3rem' }}
-              value={mergeOptions?.[key] || 'max'}
+              value={mergeOptions?.[key] || 'sum'}
               onChange={(e) => changeMergeOption({ [key]: e.target.value })}
               title={`합친 줄의 ${label}: 합산 / 가장 큰 값 / 가장 작은 값 (금액과 세액은 항상 합산)`}
             >
@@ -258,6 +362,21 @@ function TransactionItemsTable({
         ))}
         <span style={{ color: '#94a3b8' }}>합친 줄을 펼치면 그 줄만 따로 고를 수 있습니다</span>
       </div>
+      {selectedVis.length > 0 && (
+        <div className="row-selection-bar">
+          <strong>{selectedVis.length}줄 선택</strong>
+          <button className="btn" onClick={copySelected} title="선택한 줄을 복제해서 선택한 줄 중 마지막 줄 바로 아래에 넣습니다. 넣은 복사본이 선택됩니다">
+            <Copy size={13} /> 복사해서 아래에 넣기
+          </button>
+          <button className="btn" style={{ color: '#dc2626' }} onClick={deleteSelected}>
+            <Trash2 size={13} /> 선택한 줄 삭제
+          </button>
+          <button className="btn" onClick={clearSelection}>
+            <X size={13} /> 선택 해제
+          </button>
+          <span style={{ color: '#475569' }}>선택한 줄의 <strong>이동</strong> 칸을 끌면 선택한 줄이 모두 함께 옮겨집니다.</span>
+        </div>
+      )}
       {filtered && (
         <div style={{
           display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap',
@@ -281,13 +400,18 @@ function TransactionItemsTable({
       <table ref={tableRef} className="data-table data-table--compact">
         <thead>
           <tr>
-            <th style={{ width: COL_WIDTH.no }} title="지금 보이는 목록에서 몇 번째 줄인지 (출력 순서)">No</th>
+            <th style={{ width: COL_WIDTH.no }}>
+              <button type="button" className="th-filter" onClick={toggleSelectAll}
+                title="지금 보이는 목록에서 몇 번째 줄인지 (출력 순서). 번호를 누르면 줄 선택 — 여기를 누르면 보이는 줄 전체 선택/해제">
+                <span>No</span>
+              </button>
+            </th>
             <th style={{ width: '32px' }} title="이동">이동</th>
             {columns.map((col) => {
               const on = Array.isArray(filters[col.key]);
               return (
+                <React.Fragment key={col.key}>
                 <th
-                  key={col.key}
                   style={{ width: col.key === 'date' ? dateColWidth : COL_WIDTH[col.key] }}
                 >
                   {/* 좁은 칸에 따로 단추를 둘 자리가 없어서, 제목 자체를 누르면 엑셀처럼
@@ -307,6 +431,15 @@ function TransactionItemsTable({
                     {on ? <Filter size={10} /> : <ChevronDown size={10} />}
                   </button>
                 </th>
+                {col.key === 'supply' && noteVisible && (
+                  <th
+                    style={{ width: COL_WIDTH.printNote }}
+                    title="출력될 비고 — 자동 값(일별 합계 / 품목 메모)을 고칠 수 있습니다. 노란 칸은 직접 고친 값, ↺로 자동 값으로 되돌림"
+                  >
+                    비고
+                  </th>
+                )}
+                </React.Fragment>
               );
             })}
             <th style={{ width: COL_WIDTH.actions }} title="줄 넣기 / 삭제">작업</th>
@@ -320,29 +453,38 @@ function TransactionItemsTable({
               <React.Fragment key={item.mergeId || index}>
                 {/* 인쇄는 한 장에 PRINT_ROWS_PER_PAGE줄씩 끊어서 다음 장으로 넘어간다. 그 경계(12줄과 13줄 사이,
                     24줄과 25줄 사이…)를 표시한다. 지금 보이는(필터·정렬한) 목록 기준이라 출력과 같다. */}
-                {vi > 0 && vi % PRINT_ROWS_PER_PAGE === 0 && (
-                  <tr className="page-break-row" aria-hidden="true">
-                    <td colSpan={columns.length + 3} style={{ padding: 0, border: 'none' }}>
-                      <div style={{ borderTop: '2px dashed #dc2626' }} />
-                    </td>
-                  </tr>
-                )}
+                {vi > 0 && vi % PRINT_ROWS_PER_PAGE === 0 && renderPageTotal(vi / PRINT_ROWS_PER_PAGE)}
                 <tr
                   data-drop-kind="row" data-drop-i={vi}
                   style={{
-                    opacity: isDragging(null, vi) ? 0.5 : 1,
+                    opacity: isDragging(null, vi) || dragSource?.group?.includes(vi) ? 0.5 : 1,
                     transition: 'background-color 0.2s',
                     backgroundColor: isTarget('row', null, vi)
                       ? HIGHLIGHT
-                      : merged ? '#eff6ff' : undefined,
+                      : selected.has(index) ? SELECTED_BG : merged ? '#eff6ff' : undefined,
                     borderBottom: '1px solid var(--border-color)',
                   }}
                 >
-                  <td style={{ textAlign: 'center', color: '#64748b', fontSize: '0.75rem', padding: '0 2px' }}>{vi + 1}</td>
+                  <td style={{ padding: '0 2px' }}>
+                    {/* 번호가 곧 선택 칸이다. 누르면 선택/해제, Shift+클릭은 범위 선택. */}
+                    <label className={`row-check${selected.has(index) ? ' is-checked' : ''}`} title="눌러서 줄 선택 (Shift+클릭: 범위 선택)">
+                      <input
+                        type="checkbox"
+                        checked={selected.has(index)}
+                        onChange={() => {}}
+                        onClick={(e) => toggleSelect(vi, e.shiftKey)}
+                      />
+                      <span>{vi + 1}</span>
+                    </label>
+                  </td>
                   <td
                     className="drag-handle"
                     data-drop-kind="handle" data-drop-i={vi}
-                    onPointerDown={(e) => beginDrag(e, { p: null, i: vi }, item.name)}
+                    onPointerDown={(e) => {
+                      // 선택한 줄의 이동 칸을 잡으면 선택한 줄 모두를 함께 끈다.
+                      const group = selected.has(index) && selectedVis.length > 1 ? selectedVis : null;
+                      beginDrag(e, { p: null, i: vi, group }, group ? `선택한 ${group.length}줄` : item.name);
+                    }}
                     title={filtered
                       ? '드래그: 보이는 줄 안에서 순서변경 / 다른 행의 이 칸에 놓으면 합치기 (숨긴 줄은 그대로)'
                       : '드래그: 순서변경 / 다른 행의 이 칸에 놓으면 합치기'}
@@ -368,7 +510,7 @@ function TransactionItemsTable({
                       <GripVertical size={14} />
                     </div>
                   </td>
-                  <td><input className="input-field" value={item.date} onChange={e => onItemChange(index, 'date', e.target.value)} /></td>
+                  <td><FitInput className="input-field" placeholder="mm/dd" value={itemDateLabel(item.date)} onChange={e => onItemChange(index, 'date', itemDateFromInput(e.target.value, item.date, fallbackYear))} /></td>
                   <td>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                       {merged && (
@@ -380,15 +522,15 @@ function TransactionItemsTable({
                         </span>
                       )}
                       {/* 폭이 좁은 화면에서 긴 품목은 칸 안에서 잘린다 — 마우스를 올리면 전체가 보인다 */}
-                      <input className="input-field" title={item.name} value={item.name} onChange={e => onItemChange(index, 'name', e.target.value)} />
+                      <FitInput className="input-field" title={item.name} value={item.name} onChange={e => onItemChange(index, 'name', e.target.value)} />
                     </div>
                   </td>
-                  <td><input className="input-field" title={item.spec} value={item.spec} onChange={e => onItemChange(index, 'spec', e.target.value)} /></td>
-                  <td><input className="input-field" value={item.newOrMod || ''} onChange={e => onItemChange(index, 'newOrMod', e.target.value)} /></td>
-                  <td><input className="input-field" type="number" value={item.qty} onChange={e => onItemChange(index, 'qty', e.target.value)} /></td>
-                  <td><input className="input-field" value={item.processingTime || ''} onChange={e => onItemChange(index, 'processingTime', e.target.value)} /></td>
+                  <td><FitInput className="input-field" title={item.spec} value={item.spec} onChange={e => onItemChange(index, 'spec', e.target.value)} /></td>
+                  <td><FitInput className="input-field" value={item.newOrMod || ''} onChange={e => onItemChange(index, 'newOrMod', e.target.value)} /></td>
+                  <td><FitInput className="input-field" type="number" value={item.qty} onChange={e => onItemChange(index, 'qty', e.target.value)} /></td>
+                  <td><FitInput className="input-field" value={item.processingTime || ''} onChange={e => onItemChange(index, 'processingTime', e.target.value)} /></td>
                   <td>
-                    <input
+                    <FitInput
                       className="input-field"
                       style={{ borderColor: '#3b82f6', textAlign: 'right' }}
                       type="text"
@@ -402,7 +544,7 @@ function TransactionItemsTable({
                   </td>
                   <td>
                     {/* 단가가 있으면 수량 x 단가로 정해지므로 읽기 전용, 단가가 없을 때만 직접 입력 */}
-                    <input
+                    <FitInput
                       className="input-field"
                       style={{ textAlign: 'right', fontWeight: 500, ...(Number(item.price) > 0 ? { backgroundColor: '#f1f5f9' } : {}) }}
                       type="text"
@@ -416,9 +558,39 @@ function TransactionItemsTable({
                       }}
                     />
                   </td>
+                  {noteVisible && (() => {
+                    // 고친 값이 있으면(빈 글자도 "아무것도 안 찍음"으로 고친 것) 그 값, 없으면 자동 값.
+                    const edited = item.printNote != null;
+                    return (
+                      <td>
+                        <div style={{ display: 'flex', alignItems: 'center' }}>
+                          <FitInput
+                            className="input-field"
+                            style={{ minWidth: 0, ...(edited ? { backgroundColor: '#fef9c3', borderColor: '#eab308' } : {}) }}
+                            type="text"
+                            title={edited
+                              ? `직접 고친 비고 (자동 값: ${autoNoteList[vi] || '없음'})`
+                              : '출력될 비고 (자동 값) — 고치면 이 줄만 고친 값이 찍힙니다'}
+                            value={edited ? String(item.printNote) : autoNoteList[vi] || ''}
+                            onChange={(e) => onItemChange(index, 'printNote', e.target.value)}
+                          />
+                          {edited && (
+                            <button
+                              className="btn"
+                              title="자동 값으로 되돌리기"
+                              style={{ padding: '0 1px', border: 'none', background: 'none', color: '#a16207', fontSize: '0.75rem', lineHeight: 1 }}
+                              onClick={() => onItemChange(index, 'printNote', null)}
+                            >
+                              ↺
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    );
+                  })()}
                   {taxVisible && (
                     <td>
-                      <input
+                      <FitInput
                         className="input-field"
                         style={{ textAlign: 'right' }}
                         type="text"
@@ -438,7 +610,7 @@ function TransactionItemsTable({
                         className="btn"
                         title="합치기 해제"
                         style={{ padding: '1px', color: '#2563eb', border: 'none', background: 'none' }}
-                        onClick={() => onItemsChange(unmergeItem(items, index))}
+                        onClick={() => { clearSelection(); onItemsChange(unmergeItem(items, index)); }}
                       >
                         <Unlink size={13} />
                       </button>
@@ -453,7 +625,7 @@ function TransactionItemsTable({
                     >
                       <Plus size={13} />
                     </button>
-                    <button className="btn" title="삭제" style={{ padding: '1px', color: 'red', border: 'none', background: 'none' }} onClick={() => onDeleteItem(index)}>
+                    <button className="btn" title="삭제" style={{ padding: '1px', color: 'red', border: 'none', background: 'none' }} onClick={() => { clearSelection(); onDeleteItem(index); }}>
                       <Trash2 size={13} />
                     </button>
                   </td>
@@ -462,6 +634,8 @@ function TransactionItemsTable({
               </React.Fragment>
             );
           })}
+          {/* 마지막 장의 합계. 한 장뿐이면 아래 전체 합계와 같아서 넣지 않는다. */}
+          {printPages > 1 && renderPageTotal(printPages)}
         </tbody>
       </table>
       <div className="item-totals">
@@ -496,7 +670,7 @@ function TransactionItemsTable({
       {(printPages > 1 || filtered) && (
         <p style={{ margin: '0.25rem 0 0', fontSize: '0.75rem', color: '#64748b', textAlign: 'right' }}>
           {filtered && `합계는 보이는 ${visibleRows.length}줄 기준(출력과 같음). `}
-          {printPages > 1 && `${visibleRows.length}줄이라 ${printPages}장으로 출력되며, 인쇄물에는 장마다 그 장의 합계가 찍힙니다.`}
+          {printPages > 1 && `${visibleRows.length}줄이라 ${printPages}장으로 출력되며, 인쇄물의 합계 칸에는 장마다 전체 합계가 찍힙니다.`}
         </p>
       )}
 
@@ -528,7 +702,7 @@ function TransactionItemsTable({
           items={items}
           selected={filters[menuColumn.key] ?? null}
           anchorEl={menu.anchor}
-          onSort={(dir) => applyToView((v) => sortItemsBy(v, menuColumn.key, dir))}
+          onSort={(dir) => { clearSelection(); applyToView((v) => sortItemsBy(v, menuColumn.key, dir)); }}
           onApply={(selected) => setColumnFilter(menuColumn.key, selected)}
           onClose={() => setMenu(null)}
         />
