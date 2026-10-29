@@ -579,10 +579,10 @@ body.is-row-dragging * {
 .statement {
   --form: var(--print-blue);
   /* 양식 안의 모든 가는 선(칸 사이 선, 제목·No. 밑줄)의 최소 굵기. 크롬은 테두리를 1px(약 0.26mm)보다
-     얇게 그리지 않으므로, 1px 선을 이 비율로 줄여서 그린다: 1px × 0.756 ≈ 0.2mm.
-     0.13mm(반 줄)로 했을 때 실제 프린터(잉크젯, 색 선)에서 일부 선이 흐리거나 빠졌다 — 0.2mm 아래로 내리지 않는다.
-     더 굵게: 1에 가깝게(1 = 0.26mm). */
-  --st-line-scale: 0.756;
+     얇게 그리지 않으므로, 1px 선을 이 비율로 줄여서 그린다.
+     0.13mm(반 줄)로 했을 때 실제 프린터(잉크젯, 색 선)에서 일부 선이 흐리거나 빠졌고, 0.2mm는 조금 굵었다.
+     지금은 1px × 0.68 ≈ 0.18mm. 더 굵게: 1에 가깝게(1 = 0.26mm). */
+  --st-line-scale: 0.68;
   height: 136mm;
   display: flex;
   flex-direction: column;
@@ -678,7 +678,7 @@ body.is-row-dragging * {
   border-collapse: collapse;
   table-layout: fixed;
 }
-/* 칸 사이 선은 최소 굵기 선(--st-line-scale, 약 0.2mm)으로 그린다. 크롬은 인쇄할 때도 테두리를 1px(약 0.26mm)보다
+/* 칸 사이 선은 최소 굵기 선(--st-line-scale, 약 0.18mm)으로 그린다. 크롬은 인쇄할 때도 테두리를 1px(약 0.26mm)보다
    얇게 그리지 않아서(0.25mm·0.5px·0.1mm 모두 같은 굵기로 찍힘) border 굵기만 줄여서는 안 된다. 그래서 칸마다
    1/비율 크기의 덮개(::after)에 1px 선(오른쪽·아래)을 그리고 비율만큼 줄인다 — PDF·인쇄에서 선이 정말 그 굵기가 된다.
    각 칸은 오른쪽·아래 선만 그리고, 맨 왼쪽·위·오른쪽·아래는 바깥 굵은 테두리(.statement-frame)가 맡는다.
@@ -739,8 +739,8 @@ body.is-row-dragging * {
   position: absolute;
   right: -1mm;
   top: 50%;
-  width: 15mm;
-  height: 15mm;
+  width: 16.5mm;   /* 15mm에서 10% 키움 */
+  height: 16.5mm;
   transform: translateY(-50%);
   object-fit: contain;
   mix-blend-mode: multiply;

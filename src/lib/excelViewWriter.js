@@ -323,10 +323,10 @@ export function buildStatementWorkbook({ tx, items, supplier, receiver, printOpt
     };
     party('L', supplier || {});
     party('R', receiver || {});
-    // 도장: 공급자 대표 칸 오른쪽 끝에 15mm, 그 줄 세로 가운데
+    // 도장: 공급자 대표 칸 오른쪽 끝(1mm 넘침)에 16.5mm, 그 줄 세로 가운데 — 인쇄 양식(.st-stamp)과 같다
     const presidentRightMm = grid.bounds[grid.info[6][1]];
     const rowTopMm = rowHeightsMm.slice(1, top + 1).reduce((a, h) => a + (h || 0), 0);
-    stampSpots.push({ xMm: presidentRightMm - 14, yMm: rowTopMm + 3.9 - 7.5 });
+    stampSpots.push({ xMm: presidentRightMm + 1 - 16.5, yMm: rowTopMm + 3.9 - 16.5 / 2 });
 
     // 품목
     const head = newRow(5.6);
@@ -349,8 +349,8 @@ export function buildStatementWorkbook({ tx, items, supplier, receiver, printOpt
       put(row, grid.items[8], textOrNumber(it._note || ''), { border: b });
     }
 
-    // 합계 줄 (인수자 칸만 색 없음). 여러 장이어도 장마다 명세서 전체의 합계 — 인쇄 양식과 같다.
-    const { supply, tax } = computeTotals(items);
+    // 합계 줄 (인수자 칸만 색 없음). 장마다 그 장의 합계 — 인쇄 양식과 같다.
+    const { supply, tax } = computeTotals(pageItems);
     const sr = newRow(8.6);
     const fill = SUM_FILL[type];
     const sumCells = ['미수금', null, '금액', supply || null, '세액', tax || null, '합계', (supply + tax) || null];
@@ -394,7 +394,7 @@ export function buildStatementWorkbook({ tx, items, supplier, receiver, printOpt
       return rowHeightsMm.length - 1;
     };
     stampSpots.forEach(({ xMm, yMm }) => {
-      ws.addImage(imageId, { tl: { col: colAt(xMm), row: rowAt(Math.max(0, yMm)) }, ext: { width: 57, height: 57 }, editAs: 'oneCell' });
+      ws.addImage(imageId, { tl: { col: colAt(xMm), row: rowAt(Math.max(0, yMm)) }, ext: { width: 63, height: 63 }, editAs: 'oneCell' });
     });
   }
   return wb;

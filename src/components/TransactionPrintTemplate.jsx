@@ -79,8 +79,6 @@ const TransactionPrintTemplate = React.forwardRef(({ data, receiver, supplier, d
   }
   if (pages.length === 0) pages.push([]);
 
-  // 합계 줄은 여러 장이어도 장마다 명세서 전체의 합계를 찍는다(장별 합계는 거래 내역 수정 화면에서만 보인다).
-  const totals = computeTotals(items);
 
   const formatCurrency = (val) => (val ? Number(val).toLocaleString() : '');
   const printedDate = formatStatementDate(date);
@@ -109,6 +107,9 @@ const TransactionPrintTemplate = React.forwardRef(({ data, receiver, supplier, d
     const displayItems = [...pageItems];
     while (displayItems.length < MAX_ROWS) displayItems.push(EMPTY_ROW);
 
+
+    // 합계 줄은 장마다 그 장에 찍힌 줄의 합계
+    const totals = computeTotals(pageItems);
 
     const S = partyCells(supplier, true);
     const R = partyCells(receiver, false);

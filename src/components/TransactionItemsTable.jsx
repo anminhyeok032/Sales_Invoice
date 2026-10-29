@@ -323,8 +323,8 @@ function TransactionItemsTable({
   const printPages = Math.ceil(visibleRows.length / PRINT_ROWS_PER_PAGE);
   const won = (n) => `₩${n.toLocaleString()}`;
 
-  // 장마다의 합계 줄(화면 확인용). 인쇄는 PRINT_ROWS_PER_PAGE줄씩 한 장인데, 인쇄물의 합계 칸에는 장마다 전체 합계가
-  // 찍히므로 장별 합계는 여기서만 본다. 그 장의 마지막 줄 아래에 두고 빨간 점선으로 장을 나눈다. 금액은 공급가액(세액) 칸 아래에 맞춘다.
+  // 장마다의 합계 줄. 인쇄는 PRINT_ROWS_PER_PAGE줄씩 한 장이고 장마다 그 장의 합계가 찍힌다 — 화면에서도 그 장의
+  // 마지막 줄 아래에 같은 합계를 보여 주고, 빨간 점선으로 장을 나눈다. 금액은 공급가액(세액) 칸 아래에 맞춘다.
   const supplyCol = columns.findIndex((c) => c.key === 'supply');
   const renderPageTotal = (page) => {
     const pageRows = visibleRows.slice((page - 1) * PRINT_ROWS_PER_PAGE, page * PRINT_ROWS_PER_PAGE);
@@ -674,7 +674,7 @@ function TransactionItemsTable({
       {(printPages > 1 || filtered) && (
         <p style={{ margin: '0.25rem 0 0', fontSize: '0.75rem', color: '#64748b', textAlign: 'right' }}>
           {filtered && `합계는 보이는 ${visibleRows.length}줄 기준(출력과 같음). `}
-          {printPages > 1 && `${visibleRows.length}줄이라 ${printPages}장으로 출력되며, 인쇄물의 합계 칸에는 장마다 전체 합계가 찍힙니다.`}
+          {printPages > 1 && `${visibleRows.length}줄이라 ${printPages}장으로 출력되며, 인쇄물에는 장마다 그 장의 합계가 찍힙니다.`}
         </p>
       )}
 
