@@ -4,7 +4,7 @@ import { openPrintPreview } from '../lib/printPreview';
 import { useItemFilters } from '../hooks/useItemFilters';
 import { filterItems, isFilterActive, filtersKey } from '../lib/itemTableView';
 import TransactionPrintTemplate from './TransactionPrintTemplate';
-import { Printer, Trash2, Plus, Save, Link2, Unlink, DatabaseBackup, Download, Upload, FileSpreadsheet } from 'lucide-react';
+import { Printer, Trash2, Plus, Save, Link2, Unlink, DatabaseBackup, Download, Upload, FileSpreadsheet, ChevronDown, ChevronRight, Copy } from 'lucide-react';
 import {
   useJsonBackupStatus, connectJsonBackup, reconnectJsonBackup, disconnectJsonBackup,
   downloadBackup, parseBackup, summarizeRestore, applyRestore,
@@ -18,13 +18,15 @@ import { applyItemChange } from '../lib/transactionItems';
 import { createItemForFilters } from '../lib/itemTableView';
 import { receiverInfo } from '../lib/companyLookup';
 import { listContext, summarizeForList, receiverMatchFor } from '../lib/statementView';
-import { parseLegacyImportFile, summarizeImport, mergeCompanies } from '../lib/legacyImport';
+import { parseLegacyImportFile, parseLegacyImportData, summarizeImport, mergeCompanies } from '../lib/legacyImport';
+import { readTradetaxGdb } from '../lib/legacyGdb';
 import { toDateKey, isWithinRange } from '../lib/dateRange';
 import TransactionItemsTable from './TransactionItemsTable';
 import CollapsibleCard from './CollapsibleCard';
 import { applyOverride, patchFor } from '../lib/partyOverride';
 import { PartiesPanel } from './StatementPartiesCard';
 import PrintOptions from './PrintOptions';
+import { groupKeyOf, buildGroupView, effectiveTitle } from '../lib/statementPages';
 
 // 한 번에 그리는 최대 줄 수. 가져온 내역이 수천 건이라 전부 그리면 목록이 버벅인다.
 const VISIBLE_LIMIT = 500;
@@ -63,7 +65,7 @@ function currentPeriodRange() {
 
 function History() {
   const {
-    transactions, transactionsLoaded, lastSaved, companies, deleteTransaction, saveTransaction,
+    transactions, transactionsLoaded, lastSaved, companies, deleteTransaction, deleteTransactions, saveStatement,
     importTransactions, setCompanies, setCompaniesDirty,
   } = useStore();
   const [selectedTx, setSelectedTx] = useState(null);
@@ -93,7 +95,9 @@ function History() {
   const [fromDate, setFromDate] = useState(() => currentPeriodRange()[0]);
   const [toDate, setToDate] = useState(() => currentPeriodRange()[1]);
   const [companyFilter, setCompanyFilter] = useState('');
-  const [companySearch, setCompanySearch] = useState('');   // 상호명에 들어 있는 글자로 찾기
+  const [companySearch, setCompanySearch] = useState('');   // 검색어
+  // 검색 기준: 'all' 상호·제목·내용 / 'name' 상호만 / 'text' 제목·내용(품목·규격)
+  const [searchScope, setSearchScope] = useState('all');
   const [sortKey, setSortKey] = useState('date');   // date | name | amount
   const [sortDesc, setSortDesc] = useState(true);
 
@@ -101,9 +105,26 @@ function History() {
   //  - 상호명: 엑셀 이름('가나')이 아니라 실제로 인쇄되는 공급받는자 상호
   //  - 내용: 첫 품목 + '외 N종' (기존 프로그램이 만들던 방식)
   // 엑셀 보기 파일의 '목록' 시트도 같은 함수(statementView.summarizeForList)를 쓴다.
+  // 검색용 글자도 여기서 한 번 만들어 둔다(공백 빼고 소문자): 제목(비어 있으면 그 묶음 1장 제목)과
+  // 내용(모든 줄의 품목·규격, 합친 줄은 원본 줄까지).
   const rows = useMemo(() => {
     const ctx = listContext(companies, receiverAliases);
-    return transactions.map((tx) => summarizeForList(tx, ctx));
+    const firstPageTitle = new Map();
+    transactions.forEach((t) => {
+      const k = groupKeyOf(t);
+      const cur = firstPageTitle.get(k);
+      if (!cur || (t.page || 1) < cur.page) firstPageTitle.set(k, { page: t.page || 1, title: t.title || '' });
+    });
+    const norm = (v) => String(v ?? '').replace(/\s+/g, '').toLowerCase();
+    return transactions.map((tx) => {
+      const r = summarizeForList(tx, ctx);
+      const lines = (tx.items || []).flatMap((it) => [it, ...(it.mergedFrom || [])]);
+      return {
+        ...r,
+        searchTitle: norm(tx.title || firstPageTitle.get(groupKeyOf(tx))?.title),
+        searchContent: norm(lines.map((it) => `${it.name || ''} ${it.spec || ''}`).join('|')),
+      };
+    });
   }, [transactions, companies, receiverAliases]);
 
   const yearOptions = useMemo(
@@ -116,15 +137,20 @@ function History() {
   const toKey = toDateKey(toDate);
 
   // 거래처 고르기 목록: 저장된 내역 전체가 아니라 지금 조건(기간, 검색어)에서 실제로 내역이 있는 상호만.
-  // 검색어는 공백·대소문자를 무시하고 상호명에 들어 있는지로 본다.
+  // 검색어는 공백·대소문자를 무시하고, 검색 기준(searchScope)에 따라 상호명 / 제목·내용에 들어 있는지로 본다.
   const searchKey = companySearch.replace(/\s+/g, '').toLowerCase();
-  const matchesSearch = (r) => !searchKey || r.sortName.toLowerCase().includes(searchKey);
+  const matchesSearch = (r) => {
+    if (!searchKey) return true;
+    const inName = searchScope !== 'text' && r.sortName.toLowerCase().includes(searchKey);
+    const inText = searchScope !== 'name' && (r.searchTitle.includes(searchKey) || r.searchContent.includes(searchKey));
+    return inName || inText;
+  };
   const companyOptions = useMemo(
     () => [...new Set(rows
       .filter((r) => isWithinRange(r.tx.date, fromKey, toKey) && matchesSearch(r))
       .map((r) => r.name).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko')),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [rows, fromKey, toKey, searchKey]
+    [rows, fromKey, toKey, searchKey, searchScope]
   );
   // 기간이나 검색어를 바꿔서 골라 둔 거래처가 목록에서 사라졌으면 그 선택은 없는 것으로 본다.
   const activeCompany = companyOptions.includes(companyFilter) ? companyFilter : '';
@@ -144,6 +170,12 @@ function History() {
       if (searchKey && !matchesSearch(savedRow)) setCompanySearch('');
       if (!isWithinRange(savedRow.tx.date, fromKey, toKey)) { setFromDate(''); setToDate(''); }
       if (selectedTx?.id === savedRow.tx.id) setSelectedTx(savedRow.tx);
+      // 묶음 전체를 열어 둔 상태에서 그 묶음이 다른 화면에서 다시 저장됐으면 새 장들로 바꿔 연다.
+      if (selectedTx?.groupView && selectedTx.groupView === groupKeyOf(savedRow.tx)) {
+        const members = transactions.filter((t) => groupKeyOf(t) === selectedTx.groupView)
+          .sort((a, b) => (a.page || 1) - (b.page || 1));
+        setSelectedTx(members.length > 1 ? buildGroupView(members) : members[0]);
+      }
     }
   }
 
@@ -160,7 +192,54 @@ function History() {
       .filter((r) => isWithinRange(r.tx.date, fromKey, toKey))
       .sort((a, b) => dir * cmp(a, b) || dir * a.dateKey.localeCompare(b.dateKey));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, activeCompany, searchKey, fromKey, toKey, sortKey, sortDesc]);
+  }, [rows, activeCompany, searchKey, searchScope, fromKey, toKey, sortKey, sortDesc]);
+
+  // 장 단위로 나눠 저장한 명세서(lib/statementPages.js)는 목록에서 한 묶음으로 보인다: 묶음 줄 아래에 장마다 한 줄.
+  // 묶음 줄을 누르면 모든 장을 이어 붙인 명세서 전체가, 장 줄을 누르면 그 장만 열린다. 묶음 줄의 ▼로 접는다.
+  // 장 번호는 지금 남아 있는 장들 사이의 순서다(한 장을 지워도 번호가 비지 않게).
+  const membersByKey = useMemo(() => {
+    const map = new Map();
+    transactions.forEach((t) => {
+      const k = groupKeyOf(t);
+      if (!map.has(k)) map.set(k, []);
+      map.get(k).push(t);
+    });
+    map.forEach((list) => list.sort((a, b) => (a.page || 1) - (b.page || 1)));
+    return map;
+  }, [transactions]);
+  const rowById = useMemo(() => new Map(rows.map((r) => [r.tx.id, r])), [rows]);
+  const [collapsedGroups, setCollapsedGroups] = useState(() => new Set());
+  const toggleGroup = (key) => setCollapsedGroups((prev) => {
+    const next = new Set(prev);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
+  const titleOf = (tx) => {
+    const members = membersByKey.get(groupKeyOf(tx)) || [tx];
+    // 그 장에 쓴 제목, 비어 있으면 1장 제목
+    return effectiveTitle([tx.title], 0) || effectiveTitle([members[0]?.title], 0);
+  };
+  const displayRows = useMemo(() => {
+    const shownByKey = new Map();
+    filtered.forEach((r) => {
+      const k = groupKeyOf(r.tx);
+      if (!shownByKey.has(k)) shownByKey.set(k, []);
+      shownByKey.get(k).push(r);
+    });
+    const out = [];
+    const seen = new Set();
+    filtered.forEach((r) => {
+      const key = groupKeyOf(r.tx);
+      if (seen.has(key)) return;
+      seen.add(key);
+      const members = membersByKey.get(key) || [r.tx];
+      if (members.length <= 1) { out.push({ kind: 'single', r, members }); return; }
+      const shown = shownByKey.get(key).sort((a, b) => members.indexOf(a.tx) - members.indexOf(b.tx));
+      out.push({ kind: 'group', key, members, shown });
+      if (!collapsedGroups.has(key)) shown.forEach((c) => out.push({ kind: 'page', r: c, key, members }));
+    });
+    return out;
+  }, [filtered, membersByKey, collapsedGroups]);
 
   // 아래 고정 줄: 지금 조회된 목록 전체의 매출 합계(화면에 다 그리지 않은 줄까지).
   const listTotals = useMemo(() => filtered.reduce(
@@ -262,7 +341,10 @@ function History() {
     setImportError('');
     setImportNotice('');
     try {
-      const parsed = parseLegacyImportFile(await file.text());
+      // 기존 프로그램 데이터 파일(Tradetax.gdb)을 바로 읽는다. 예전에 파이썬 스크립트로 만든 .json도 받는다.
+      const parsed = /\.gdb$/i.test(file.name)
+        ? parseLegacyImportData(readTradetaxGdb(await file.arrayBuffer(), file.name))
+        : parseLegacyImportFile(await file.text());
       const state = useStore.getState();
       const s = summarizeImport(parsed, state.transactions, state.companies);
 
@@ -271,7 +353,7 @@ function History() {
         '',
         `거래명세서 ${s.total.toLocaleString()}건 (품목 ${s.items.toLocaleString()}줄)`,
         `  · 새로 추가: ${s.added.toLocaleString()}건`,
-        `  · 이미 있어서 덮어씀: ${s.overwritten.toLocaleString()}건`,
+        `  · 이미 있어서 기존 프로그램 내용으로 다시 덮어씀: ${s.overwritten.toLocaleString()}건 (앱에서 고친 것도 원래대로 돌아감)`,
         s.minYear ? `  · 기간: ${s.minYear}년 ~ ${s.maxYear}년` : '',
         '',
         s.newCompanies > 0
@@ -339,25 +421,58 @@ function History() {
     setItems(newItems);
   };
 
+  // 장마다 쓴 제목. 묶음 전체를 열었으면 장마다, 한 장을 열었으면 그 장 하나(+ 12줄을 넘겨 늘어난 장).
+  const editTitles = selectedTx ? (selectedTx.pageTitles ?? [selectedTx.title || '']) : [];
+  const setEditTitles = (titles) => setSelectedTx({ ...selectedTx, pageTitles: titles });
+  // 한 장만 열었을 때 그 장이 묶음의 몇 번째 장인지, 1장 제목(비워 둔 장이 따라갈 제목).
+  const openedMembers = selectedTx && !selectedTx.groupView ? (membersByKey.get(groupKeyOf(selectedTx)) || []) : [];
+  const openedPageNo = openedMembers.length > 1 ? openedMembers.findIndex((m) => m.id === selectedTx.id) + 1 : 1;
+
+  // 저장한 뒤 화면에 둘 것: 묶음 전체를 열어 고쳤거나 한 장이 여러 장으로 늘었으면 묶음 전체, 아니면 저장한 그 장.
+  const openAfterSave = ({ savedIds, groupId }, preferGroup) => {
+    const state = useStore.getState();
+    const members = state.transactions.filter((t) => groupKeyOf(t) === groupId)
+      .sort((a, b) => (a.page || 1) - (b.page || 1));
+    if ((preferGroup || savedIds.length > 1) && members.length > 1) setSelectedTx(buildGroupView(members));
+    else setSelectedTx(state.transactions.find((t) => t.id === savedIds[0]) || null);
+  };
+
   const handleSave = () => {
     if (!selectedTx) return;
+    const statement = { ...selectedTx, pageTitles: editTitles };
 
     if (!itemsFiltered) {
-      // 필터가 없으면 이 명세서를 그대로 갱신한다.
-      saveTransaction(selectedTx);
-      alert('수정된 내용이 안전하게 저장되었습니다!');
+      // 필터가 없으면 이 명세서를 그대로 갱신한다. 12줄이 넘으면 장마다 나눠 저장한다(store.saveStatement).
+      //  - 묶음 전체를 열었으면 그 묶음의 장들을 통째로 갈아 끼운다
+      //  - 한 장을 열었으면 그 장만(넘친 줄은 바로 뒤에 새 장으로), 예전 기록 하나면 그 기록을 장으로 나눈다
+      const target = selectedTx.groupView
+        ? { kind: 'group', key: selectedTx.groupView }
+        : selectedTx.groupId ? { kind: 'page', id: selectedTx.id } : { kind: 'group', key: String(selectedTx.id) };
+      const result = saveStatement(statement, target);
+      openAfterSave(result, Boolean(selectedTx.groupView));
+      alert(result.savedIds.length > 1
+        ? `수정된 내용을 ${result.savedIds.length}장으로 나눠 저장했습니다.`
+        : '수정된 내용이 안전하게 저장되었습니다!');
       return;
     }
 
     // 필터가 걸려 있으면 "지금 출력되는 상태"(보이는 줄, 정렬·이동·합치기한 순서 그대로)만 따로 저장한다.
     // 원래 명세서에 덮어쓰면 숨긴 줄이 지워지므로 원본은 건드리지 않고 새 명세서로 남긴다.
-    // 같은 필터 조건으로 다시 저장하면 그 새 명세서가 갱신된다(store.saveTransaction의 viewKey).
-    const { id: _original, ...rest } = selectedTx;   // eslint-disable-line no-unused-vars
-    const savedId = saveTransaction({ ...rest, items: printItems, viewKey: filtersKey(itemFilters) });
+    // 같은 필터 조건으로 다시 저장하면 그 새 명세서가 갱신된다(viewKey).
+    const result = saveStatement({ ...statement, items: printItems, viewKey: filtersKey(itemFilters) }, { kind: 'new' });
     // 저장된 상태를 바로 열어 보여준다. 다른 명세서가 선택되므로 필터는 저절로 풀린다.
-    const saved = useStore.getState().transactions.find((t) => t.id === savedId);
-    if (saved) setSelectedTx(saved);
-    alert(`필터 상태 그대로 ${printItems.length}줄을 새 명세서로 저장했습니다. (원래 명세서 ${allItems.length}줄은 그대로 남아 있습니다)`);
+    openAfterSave(result, true);
+    alert(`필터 상태 그대로 ${printItems.length}줄을 새 명세서로 저장했습니다${result.savedIds.length > 1 ? ` (${result.savedIds.length}장)` : ''}. (원래 명세서 ${allItems.length}줄은 그대로 남아 있습니다)`);
+  };
+
+  // 복사해서 저장: 지금 고친 내용(필터가 걸려 있으면 보이는 줄만)을 원래 명세서와 별개인 새 명세서로 저장한다.
+  // 원래 명세서는 고친 것이 저장되지 않은 채 그대로 남는다. 새 명세서 작성에서 같은 달·같은 거래처로 다시 저장해도
+  // 이 사본이 덮어써지지 않는다(store/statementPages의 'copy').
+  const handleSaveCopy = () => {
+    if (!selectedTx) return;
+    const result = saveStatement({ ...selectedTx, pageTitles: editTitles, items: printItems }, { kind: 'copy' });
+    openAfterSave(result, true);
+    alert(`${printItems.length}줄을 새 명세서로 복사해 저장했습니다${result.savedIds.length > 1 ? ` (${result.savedIds.length}장)` : ''}. 원래 명세서는 그대로입니다.`);
   };
 
   return (
@@ -442,12 +557,12 @@ function History() {
             <DatabaseBackup size={16} /> 기존 프로그램 데이터 가져오기
           </button>
           <span style={{ fontSize: '0.8125rem', color: '#64748b' }}>
-            tools/gdb 로 만든 tradetax-import.json 을 고르면 예전 거래명세서가 이 목록에 들어옵니다.
+            기존 프로그램의 데이터 파일 <b>Tradetax.gdb</b>를 고르면 예전 거래명세서(제목 포함)가 이 목록에 들어옵니다. 이미 있는 것은 기존 프로그램 내용으로 다시 덮어씁니다.
           </span>
           <input
             ref={importInputRef}
             type="file"
-            accept="application/json,.json"
+            accept=".gdb,.GDB,application/json,.json"
             onChange={handleImportFile}
             style={{ display: 'none' }}
           />
@@ -492,8 +607,21 @@ function History() {
                 </span>
               </div>
               <div className="history-filters__row">
+                <select className="input-field" style={{ flex: '0 0 auto', width: 'auto' }}
+                  value={searchScope} onChange={(e) => setSearchScope(e.target.value)}
+                  title="검색어를 어디에서 찾을지">
+                  <option value="all">상호·제목·내용</option>
+                  <option value="name">상호</option>
+                  <option value="text">제목·내용</option>
+                </select>
                 <input className="input-field" style={{ flex: '1 1 7rem', minWidth: 0 }} type="search"
-                  placeholder="거래처 검색" value={companySearch}
+                  placeholder={{ all: '상호·제목·품목 검색', name: '상호 검색', text: '제목·품목·규격 검색' }[searchScope]}
+                  title={{
+                    all: '상호명, 장 제목, 품목·규격 중 어디에든 들어 있으면 찾습니다',
+                    name: '상호명에 들어 있으면 찾습니다',
+                    text: '장 제목이나 품목·규격(합친 줄의 원본 포함)에 들어 있으면 찾습니다',
+                  }[searchScope]}
+                  value={companySearch}
                   onChange={(e) => setCompanySearch(e.target.value)} />
                 <select className="input-field" style={{ flex: '1 1 12rem', minWidth: 0 }}
                   value={activeCompany} onChange={(e) => setCompanyFilter(e.target.value)}>
@@ -542,35 +670,83 @@ function History() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filtered.slice(0, VISIBLE_LIMIT).map((r) => (
-                      <tr key={r.tx.id} onClick={() => setSelectedTx(r.tx)}
-                        className={selectedTx?.id === r.tx.id ? 'is-selected' : undefined}>
-                        <td>{fmtDate(r.dateKey, r.tx.date)}</td>
-                        <td title={r.summary}>{r.summary}</td>
-                        <td title={r.name !== r.tx.companyName ? `엑셀 이름: ${r.tx.companyName}` : r.name}>{r.name}</td>
-                        <td className="num">{won(r.supply)}</td>
-                        <td className="num">{r.tax ? won(r.tax) : ''}</td>
-                        <td className="num">{won(r.total)}</td>
-                        <td style={{ textAlign: 'center', padding: 0 }}>
-                          <button className="btn" title="삭제"
-                            style={{ padding: '2px', color: 'red', border: 'none', background: 'none' }}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (!window.confirm(`${fmtDate(r.dateKey, r.tx.date)} ${r.name} 명세서를 삭제할까요?`)) return;
-                              deleteTransaction(r.tx.id);
-                              if (selectedTx?.id === r.tx.id) setSelectedTx(null);
-                            }}>
-                            <Trash2 size={13} />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                    {displayRows.slice(0, VISIBLE_LIMIT).map((d) => {
+                      if (d.kind === 'group') {
+                        const first = rowById.get(d.members[0].id) || d.shown[0];
+                        const sum = d.shown.reduce((a, c) => ({ supply: a.supply + c.supply, tax: a.tax + c.tax, total: a.total + c.total }), { supply: 0, tax: 0, total: 0 });
+                        const open = !collapsedGroups.has(d.key);
+                        const viewId = `group:${d.key}`;
+                        const title = String(d.members[0].title || '').trim();
+                        return (
+                          <tr key={viewId} className={`history-group-row${selectedTx?.id === viewId ? ' is-selected' : ''}`}
+                            onClick={() => setSelectedTx(buildGroupView(d.members))}
+                            title="누르면 모든 장을 이어 붙인 명세서 전체가 열립니다">
+                            <td>{fmtDate(first.dateKey, first.tx.date)}</td>
+                            <td title={title || first.summary}>
+                              {/* 접기 단추는 내용 칸에 둔다 — 좁은 작성일자 칸에 넣으면 날짜가 '…'로 잘린다 */}
+                              <button className="btn history-group-toggle" title={open ? '장 목록 접기' : '장 목록 펼치기'}
+                                onClick={(e) => { e.stopPropagation(); toggleGroup(d.key); }}>
+                                {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                              </button>
+                              <span className="history-pages-badge">{d.members.length}장</span>
+                              {title ? <strong>{title}</strong> : first.summary}
+                            </td>
+                            <td>{first.name}</td>
+                            <td className="num">{won(sum.supply)}</td>
+                            <td className="num">{sum.tax ? won(sum.tax) : ''}</td>
+                            <td className="num">{won(sum.total)}</td>
+                            <td style={{ textAlign: 'center', padding: 0 }}>
+                              <button className="btn" title="이 명세서의 모든 장 삭제"
+                                style={{ padding: '2px', color: 'red', border: 'none', background: 'none' }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (!window.confirm(`${fmtDate(first.dateKey, first.tx.date)} ${first.name} 명세서 ${d.members.length}장을 모두 삭제할까요?`)) return;
+                                  deleteTransactions(d.members.map((m) => m.id));
+                                  if (selectedTx && (selectedTx.id === viewId || d.members.some((m) => m.id === selectedTx.id))) setSelectedTx(null);
+                                }}>
+                                <Trash2 size={13} />
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      }
+                      const { r } = d;
+                      const isPage = d.kind === 'page';
+                      const title = titleOf(r.tx);
+                      return (
+                        <tr key={r.tx.id} onClick={() => setSelectedTx(r.tx)}
+                          className={[isPage ? 'history-page-row' : '', selectedTx?.id === r.tx.id ? 'is-selected' : ''].filter(Boolean).join(' ') || undefined}>
+                          <td>{isPage ? <span className="history-page-no">{d.members.indexOf(r.tx) + 1}/{d.members.length}장</span> : fmtDate(r.dateKey, r.tx.date)}</td>
+                          <td title={title ? `${title} — ${r.summary}` : r.summary}>
+                            {title && <strong>{title}</strong>}
+                            {title ? <span className="history-summary-sub">{r.summary}</span> : r.summary}
+                          </td>
+                          <td title={r.name !== r.tx.companyName ? `엑셀 이름: ${r.tx.companyName}` : r.name}>{r.name}</td>
+                          <td className="num">{won(r.supply)}</td>
+                          <td className="num">{r.tax ? won(r.tax) : ''}</td>
+                          <td className="num">{won(r.total)}</td>
+                          <td style={{ textAlign: 'center', padding: 0 }}>
+                            <button className="btn" title={isPage ? '이 장만 삭제' : '삭제'}
+                              style={{ padding: '2px', color: 'red', border: 'none', background: 'none' }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const what = isPage ? `의 ${d.members.indexOf(r.tx) + 1}장만` : '';
+                                if (!window.confirm(`${fmtDate(r.dateKey, r.tx.date)} ${r.name} 명세서${what} 삭제할까요?`)) return;
+                                deleteTransaction(r.tx.id);
+                                if (selectedTx && (selectedTx.id === r.tx.id || selectedTx.id === `group:${d.key}`)) setSelectedTx(null);
+                              }}>
+                              <Trash2 size={13} />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
-              {filtered.length > VISIBLE_LIMIT && (
+              {displayRows.length > VISIBLE_LIMIT && (
                 <p style={{ margin: '0.375rem 0 0', fontSize: '0.75rem', color: '#64748b' }}>
-                  {filtered.length.toLocaleString()}건 중 {VISIBLE_LIMIT}건만 표시합니다. 연도·분기나 거래처로 좁혀주세요.
+                  {displayRows.length.toLocaleString()}줄 중 {VISIBLE_LIMIT}줄만 표시합니다. 연도·분기나 거래처로 좁혀주세요.
                   (아래 합계는 조회된 {filtered.length.toLocaleString()}건 전체 기준)
                 </p>
               )}
@@ -583,7 +759,11 @@ function History() {
             display: 'flex', justifyContent: 'space-between', alignItems: 'center',
             gap: '0.75rem', flexWrap: 'wrap',
           }}>
-            <span>{selectedTx ? `${selectedTx.companyName} 내역 수정` : '상세보기'}</span>
+            <span>
+              {selectedTx ? `${selectedTx.companyName} 내역 수정` : '상세보기'}
+              {selectedTx?.groupView && <span className="history-pages-badge" style={{ marginLeft: '0.5rem' }}>전체 {editTitles.length}장</span>}
+              {openedMembers.length > 1 && <span className="history-pages-badge" style={{ marginLeft: '0.5rem' }}>{openedPageNo}/{openedMembers.length}장</span>}
+            </span>
             <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
               <button className="btn" onClick={addItem} disabled={!selectedTx}
                 title={itemsFiltered ? '필터 조건에 맞는 값으로 채운 새 줄을 맨 아래에 추가합니다' : undefined}>
@@ -594,6 +774,10 @@ function History() {
                   ? '지금 보이는(필터·정렬한) 줄만, 출력할 때와 같은 상태로 새 명세서로 저장합니다. 원래 명세서는 그대로 둡니다'
                   : '이 명세서의 변경사항을 저장합니다'}>
                 <Save size={16} /> {itemsFiltered ? `현재 상태를 새 명세서로 저장 (${printItems.length}줄)` : '변경사항 저장'}
+              </button>
+              <button className="btn" onClick={handleSaveCopy} disabled={!selectedTx}
+                title="지금 고친 내용을 원래 명세서와 별개인 새 명세서로 저장합니다. 원래 명세서는 바뀌지 않습니다">
+                <Copy size={16} /> 복사해서 새로 저장
               </button>
               <button className="btn btn-primary" onClick={handlePrint} disabled={!selectedTx}
                 title="새 창에서 미리보기 (필터가 걸려 있으면 보이는 줄만 출력)">
@@ -645,6 +829,11 @@ function History() {
                 dateColWidth="46px"
                 filters={itemFilters}
                 onFiltersChange={setItemFilters}
+                pageTitles={editTitles}
+                onPageTitlesChange={setEditTitles}
+                firstPageNo={openedPageNo}
+                inheritTitle={openedPageNo > 1 ? String(openedMembers[0]?.title || '') : ''}
+                clipboardSource={`${selectedTx.companyName} ${selectedTx.date || ''} 명세서`}
               />
             </>
           ) : (

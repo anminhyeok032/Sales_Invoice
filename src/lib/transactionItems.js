@@ -22,13 +22,14 @@ export function computeTotals(items) {
 //   예) 09/01, (빈칸), (빈칸), 09/02, (빈칸)  ->  세 번째 줄과 다섯 번째 줄에만 합계
 // 합계는 끝자리의 0을 모두 뗀 값이다: 50000 -> '5', 1670 -> '167', 1234 -> '1234'.
 // 반환: items와 같은 길이의 배열. 합계를 찍을 줄에만 글자, 나머지는 ''.
-// 맨 앞에 날짜 없는 줄이 있으면(어느 날짜에도 속하지 않음) 합계에 넣지 않는다. 합계가 0 이하면 찍지 않는다.
+// 맨 앞에 날짜 없는 줄이 있으면(어느 날짜에도 속하지 않음) 합계에 넣지 않는다. 합계가 0이면 찍지 않는다
+// (마이너스 줄로 그날 합계가 마이너스면 '-5'처럼 찍는다).
 export function dailySumLabels(items) {
   const labels = items.map(() => '');
   let currentDate = null;   // 지금 묶음의 날짜 (묶음이 아직 없으면 null)
   let sum = 0;
   const close = (lastIndex) => {
-    if (currentDate !== null && sum > 0) labels[lastIndex] = formatDailySum(sum);
+    if (currentDate !== null && sum !== 0) labels[lastIndex] = formatDailySum(sum);
   };
   items.forEach((item, index) => {
     const date = String(item.date ?? '').trim();
@@ -83,13 +84,14 @@ export function applyItemChange(items, index, field, value) {
   const newItems = [...items];
   newItems[index] = { ...newItems[index], [field]: value };
 
-  // 공급가액은 직접 입력할 수 있지만 단가가 우선이다: 단가가 있으면(0보다 크면) 공급가액은
+  // 공급가액은 직접 입력할 수 있지만 단가가 우선이다: 단가가 있으면(0이 아니면) 공급가액은
   // 항상 수량 x 단가이고, 그때 공급가액을 직접 넣으려는 입력은 무시한다. 단가가 없을 때만
   // 직접 입력한 값이 남는다. 단가를 지워도 공급가액은 그대로 두어(직접 입력 값이 된다) 고칠 수 있다.
   // 세액은 건드리지 않는다 — 기존 명세서 중 세액이 있었던 건 0.5%도 안 돼서, 사용자가 직접 넣을 때만 들어간다.
+  // 마이너스 단가(반품·할인 등)도 단가로 본다 — 0이 아니면 수량 x 단가.
   const price = Number(newItems[index].price) || 0;
-  if (field === 'supply' && price > 0) return items;
-  if ((field === 'price' || field === 'qty') && price > 0) {
+  if (field === 'supply' && price !== 0) return items;
+  if ((field === 'price' || field === 'qty') && price !== 0) {
     newItems[index].supply = (Number(newItems[index].qty) || 0) * price;
   }
   return newItems;
@@ -106,14 +108,33 @@ export function clearTaxes(items) {
 export function copyItems(items, positions) {
   const sorted = [...new Set(positions)].filter((p) => p >= 0 && p < items.length).sort((a, b) => a - b);
   if (sorted.length === 0) return { items, copies: [] };
-  const copies = sorted.map((p) => {
-    const item = items[p];
-    if (!isMergedItem(item)) return { ...item };
-    return { ...item, mergeId: nextMergeId(), mergedFrom: item.mergedFrom.map((s) => ({ ...s })) };
-  });
+  const copies = sorted.map((p) => cloneItem(items[p]));
   const next = [...items];
   next.splice(sorted[sorted.length - 1] + 1, 0, ...copies);
   return { items: next, copies };
+}
+
+// 줄 하나의 복제본. 합쳐진 줄은 원본까지 통째로 복제하고 새 mergeId를 준다.
+export function cloneItem(item) {
+  if (!isMergedItem(item)) return { ...item };
+  return { ...item, mergeId: nextMergeId(), mergedFrom: item.mergedFrom.map((s) => ({ ...s })) };
+}
+
+// 클립보드의 줄들을 at 자리(배열 안 위치)에 붙여 넣는다. 붙일 때마다 새로 복제해서, 같은 줄을 여러 번 붙여도
+// 서로 다른 줄이 된다. 반환: { items, pasted: 넣은 줄들 }
+export function pasteItems(items, rows, at) {
+  const pasted = rows.map(cloneItem);
+  const next = [...items];
+  next.splice(Math.max(0, Math.min(at, items.length)), 0, ...pasted);
+  return { items: next, pasted };
+}
+
+// 엑셀에 바로 붙여 넣을 수 있는 글자(탭으로 칸 구분). 시스템 클립보드에도 같이 넣는다.
+export function itemsAsTsv(items) {
+  const head = ['날짜', '품목', '규격', '수량', '단가', '공급가액', '세액'];
+  const clean = (v) => String(v ?? '').replace(/[\t\r\n]+/g, ' ');
+  return [head, ...items.map((it) => [it.date, it.name, it.spec, it.qty, it.price, it.supply, it.tax])]
+    .map((cols) => cols.map(clean).join('\t')).join('\r\n');
 }
 
 // 여러 줄 한꺼번에 옮기기: positions의 줄들을 (원래 순서대로 붙여서) target 줄 자리로 옮긴다.

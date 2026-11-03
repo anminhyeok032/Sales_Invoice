@@ -4,6 +4,7 @@
 // 값은 모두 앱 화면과 같은 함수(statementView.js)로 계산해서, 저장된 내역 조회 목록·인쇄물과 같게 한다.
 import { PRINT_ROWS_PER_PAGE, isMergedItem } from './transactionItems';
 import { listContext, summarizeForList, printedSupplier, printedNotes, transactionOrigin } from './statementView';
+import { groupKeyOf } from './statementPages';
 
 // 'YYYYMMDD' -> 엑셀 날짜로 쓸 Date (UTC 자정 — 시간대 때문에 하루가 밀리지 않게). 모르면 null.
 export function dateFromKey(key) {
@@ -27,6 +28,15 @@ export function buildExcelView(state) {
   const ctx = listContext(companies, receiverAliases);
   const list = sortedForList(transactions.map((tx) => summarizeForList(tx, ctx)));
 
+  // 장 단위로 나눠 저장한 명세서: 몇 장 중 몇 번째인지와 제목(비어 있으면 1장 제목).
+  const members = new Map();
+  transactions.forEach((t) => {
+    const k = groupKeyOf(t);
+    if (!members.has(k)) members.set(k, []);
+    members.get(k).push(t);
+  });
+  members.forEach((m) => m.sort((a, b) => (a.page || 1) - (b.page || 1)));
+
   const listRows = [];
   const itemRows = [];
   const mergedRows = [];
@@ -34,9 +44,16 @@ export function buildExcelView(state) {
     const { tx } = row;
     const items = tx.items || [];
     const supplier = printedSupplier(state, tx);
+    // 명세서(장) 제목: 그 장에 쓴 제목, 비어 있으면 1장 제목. 기존 프로그램에서 가져온 명세서는 그때 쓴 제목.
+    const title = String(tx.title || members.get(groupKeyOf(tx))?.[0]?.title || '').trim();
     listRows.push({
       date: dateFromKey(row.dateKey),
       dateText: row.dateKey ? '' : String(tx.date || ''),   // 날짜로 못 읽는 값은 글자 그대로
+      title,
+      pageOf: (() => {
+        const m = members.get(groupKeyOf(tx)) || [];
+        return m.length > 1 ? `${m.indexOf(tx) + 1}/${m.length}` : '';
+      })(),
       summary: row.summary,
       name: row.name,
       supply: row.supply,
@@ -55,6 +72,7 @@ export function buildExcelView(state) {
         id: String(tx.id),
         txDate: dateFromKey(row.dateKey),
         name: row.name,
+        title,
         no: i + 1,
         date: item.date || '',
         itemName: item.name || '',

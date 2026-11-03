@@ -142,6 +142,9 @@ def main():
             'month': int(m) if m.isdigit() else 0,
             'companyName': t['customer']['name'] or '',
             'date': t['date'],
+            # 기존 프로그램에서 직접 쓰던 제목(TRADFLST.JKYU). 앱에서는 명세서(장) 제목이 된다 —
+            # 저장된 내역 목록에 보이고 '제목·내용' 검색으로 찾는다.
+            'title': (t['title'] or '').strip(),
             'items': [{
                 'date': i['date'] or '', 'name': i['name'] or '', 'spec': i['spec'] or '',
                 'unit': i['unit'] or '', 'qty': i['qty'] or 0, 'price': i['price'] or 0,

@@ -100,7 +100,7 @@ function todaySlash() {
 
 function NewTransaction() {
   const {
-    companies, saveTransaction,
+    companies, saveStatement,
     excelRawData, excelSheetNames, excelSelectedSheet, excelGroupedData, excelSelectedCompany,
     excelSupplierId, excelOverrides, excelParserVersion, setExcelState,
     receiverAliases, setReceiverAlias, clearReceiverAlias,
@@ -136,6 +136,9 @@ function NewTransaction() {
   const setOverrides = (next) => setExcelState({
     excelOverrides: { ...(excelOverrides || {}), [selectedCompany]: next },
   });
+  // 장마다 쓴 제목(저장된 내역 목록에서 찾을 때 보이는 이름). 이것도 거래처별로 든다.
+  const pageTitles = overrides.pageTitles || [];
+  const setPageTitles = (titles) => setOverrides({ ...overrides, pageTitles: titles });
   const setReceiverPatch = (patch) =>
     setOverrides({ ...overrides, receiver: withPatch(overrides.receiver, receiverId, patch) });
   const setSupplierPatch = (patch) => setOverrides({
@@ -318,7 +321,9 @@ function NewTransaction() {
 
   const handleSave = () => {
     if (!selectedCompany) return;
-    saveTransaction({
+    // 12줄(한 장)이 넘으면 장마다 따로 된 명세서로 저장하고 하나의 묶음으로 잇는다(store.saveStatement).
+    // 같은 (연도, 월, 거래처, 필터 조건)으로 다시 저장하면 그 묶음을 통째로 갈아 끼운다.
+    const { savedIds } = saveStatement({
       year: year,
       month: parseInt(selectedSheet),
       companyName: selectedCompany,
@@ -338,10 +343,12 @@ function NewTransaction() {
       // 어떤 필터 상태로 저장했는지. 필터 조건이 다르면 같은 달·같은 거래처여도 별개 명세서로 남고,
       // 같은 조건으로 다시 저장하면 그 명세서를 갱신한다(store.saveTransaction).
       viewKey: filtersKey(itemFilters),
+      pageTitles,
     });
+    const pagesNote = savedIds.length > 1 ? ` (${savedIds.length}장으로 나눠 저장)` : '';
     alert(itemsFiltered
-      ? `${selectedCompany} 명세서를 저장했습니다. (필터 상태 그대로 ${printItems.length}줄, 숨긴 ${currentItems.length - printItems.length}줄은 제외)`
-      : `${selectedCompany} 거래명세서가 로컬에 저장되었습니다!`);
+      ? `${selectedCompany} 명세서를 저장했습니다${pagesNote}. (필터 상태 그대로 ${printItems.length}줄, 숨긴 ${currentItems.length - printItems.length}줄은 제외)`
+      : `${selectedCompany} 거래명세서가 로컬에 저장되었습니다${pagesNote}!`);
   };
 
   const receiverBase = receiverInfo(receiverMatch.company, selectedCompany);
@@ -494,6 +501,9 @@ function NewTransaction() {
               dateColWidth="46px"
               filters={itemFilters}
               onFiltersChange={setItemFilters}
+              pageTitles={pageTitles}
+              onPageTitlesChange={setPageTitles}
+              clipboardSource={`${selectedCompany} ${selectedSheet}월 가공일지`}
             />
           </div>
         </div>

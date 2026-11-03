@@ -100,7 +100,10 @@ const TransactionPrintTemplate = React.forwardRef(({ data, receiver, supplier, d
     businessItem: <td colSpan="2" className="st-value"><FitText>{p.businessItem}</FitText></td>,
   });
 
-  const renderHalf = (type, pageItems) => {
+  // No. 옆의 장 번호: 여러 장을 한 번에 찍으면 '1 / 4'처럼. 한 장뿐이면 비운다.
+  const pageLabel = (pageIndex) => (pages.length > 1 ? `${pageIndex + 1} / ${pages.length}` : '');
+
+  const renderHalf = (type, pageItems, pageIndex) => {
     const isReceiver = type === 'receiver';
     const title = isReceiver ? '(공급받는자 보관용)' : '(공급자 보관용)';
 
@@ -122,7 +125,7 @@ const TransactionPrintTemplate = React.forwardRef(({ data, receiver, supplier, d
         <div className="statement-head">
           <div className="statement-title">거래명세표</div>
           <div className="statement-subline">
-            <span className="statement-no">No.</span>
+            <span className="statement-no">No. <span className="st-ink">{pageLabel(pageIndex)}</span></span>
             <span className="statement-subtitle">{title}</span>
             <span className="statement-date">작성일자 <span className="st-ink">{printedDate}</span></span>
           </div>
@@ -230,9 +233,9 @@ const TransactionPrintTemplate = React.forwardRef(({ data, receiver, supplier, d
     <div ref={ref}>
       {pages.map((pageItems, pageIndex) => (
         <div key={pageIndex} className="print-container" style={{ pageBreakAfter: pageIndex < pages.length - 1 ? 'always' : 'auto' }}>
-          {renderHalf('receiver', pageItems)}
+          {renderHalf('receiver', pageItems, pageIndex)}
           <div className="statement-divider" />
-          {renderHalf('supplier', pageItems)}
+          {renderHalf('supplier', pageItems, pageIndex)}
         </div>
       ))}
     </div>

@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { loadTransactions, writeTransactionChanges, readTransactions } from './lib/transactionDb';
+import { planStatementSave } from './lib/statementPages';
+import { mergeLegacyTransactions } from './lib/legacyImport';
 
 export const EMPTY_SUPPLIER = {
   regNo: '', name: '', president: '', address: '', businessType: '', businessItem: '', stamp: '',
@@ -110,6 +112,16 @@ const useStore = create(
       printOptions: { showNote: true, showDailySum: true },
       setPrintOptions: (patch) => set((state) => ({ printOptions: { ...state.printOptions, ...patch } })),
 
+      // 줄 클립보드: 거래 내역 수정에서 골라 복사한 줄들. 다른 달·다른 거래처·저장된 다른 명세서의 표에 붙여 넣는다.
+      // localStorage에 같이 남아서 화면을 옮기거나 창을 다시 열어도, 다른 창에서도 붙여 넣을 수 있다.
+      //   { items, source: '어디서 복사했는지(거래처 · 작성일자)', copiedAt: ISO 시각 }
+      rowClipboard: null,
+      setRowClipboard: (rowClipboard) => set({ rowClipboard }),
+
+      // 거래 내역 수정 표의 칸 너비(px, 칸 열쇠별). null이면 기본 배치(화면 폭에 맞춤). 표 제목 칸 끝을 끌어서 바꾼다.
+      itemColumnWidths: null,
+      setItemColumnWidths: (itemColumnWidths) => set({ itemColumnWidths }),
+
       // 여러 줄을 합칠 때 수량/가공시간을 정하는 방식: 'sum'(합산) | 'max'(큰 값) | 'min'(작은 값)
       // 기본은 둘 다 합산(v2부터).
       mergeOptions: { qty: 'sum', time: 'sum' },
@@ -211,16 +223,34 @@ const useStore = create(
         });
         return savedId;
       },
+      // 장 단위 저장(lib/statementPages.js). 12줄이 넘으면 장마다 따로 된 기록으로 남기고 groupId로 잇는다.
+      // target은 planStatementSave 설명 참고. 반환: { savedIds, groupId } — 저장 뒤 그 장/묶음을 바로 열 때 쓴다.
+      saveStatement: (statement, target = { kind: 'new' }) => {
+        let result = { savedIds: [], groupId: '' };
+        set((state) => {
+          const plan = planStatementSave(state.transactions, statement, target, newTransactionId);
+          const replaced = new Set([...plan.removeIds, ...plan.pages.map((p) => p.id)]);
+          result = { savedIds: plan.savedIds, groupId: plan.pages[0]?.groupId || '' };
+          return {
+            transactions: [...state.transactions.filter((t) => !replaced.has(t.id)), ...plan.pages],
+            lastSaved: { id: plan.savedIds[0], seq: (state.lastSaved?.seq || 0) + 1 },
+          };
+        });
+        return result;
+      },
       deleteTransaction: (id) => set((state) => ({
         transactions: state.transactions.filter(t => t.id !== id)
       })),
+      // 여러 장(묶음 전체)을 한 번에 지운다.
+      deleteTransactions: (ids) => set((state) => {
+        const drop = new Set(ids);
+        return { transactions: state.transactions.filter(t => !drop.has(t.id)) };
+      }),
 
       // 기존 프로그램에서 가져온 내역을 합친다. 같은 id는 덮어쓰고 나머지는 그대로 둔다.
-      importTransactions: (incoming) => set((state) => {
-        const byId = new Map(state.transactions.map(t => [t.id, t]));
-        incoming.forEach((t) => byId.set(t.id, t));
-        return { transactions: [...byId.values()] };
-      }),
+      importTransactions: (incoming) => set((state) => ({
+        transactions: mergeLegacyTransactions(state.transactions, incoming),
+      })),
 
       // Local excel backup of the saved transaction history (write-only, File System Access API handle lives in IndexedDB)
       transactionExcelFileName: '',

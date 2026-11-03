@@ -18,7 +18,7 @@ const DATE = 'yyyy.mm.dd';
 const nowText = (d = new Date()) => d.toLocaleString('ko-KR');
 // 비고처럼 글자 칸에 숫자만 든 값(일별 합계 '35' 등)은 숫자로 넣는다 — 글자로 넣으면 엑셀이
 // "텍스트로 저장된 숫자" 표시(녹색 삼각형)를 붙인다.
-const textOrNumber = (v) => (typeof v === 'string' && /^\d{1,15}$/.test(v) ? Number(v) : v);
+const textOrNumber = (v) => (typeof v === 'string' && /^-?\d{1,15}$/.test(v) ? Number(v) : v);
 
 // ---------------------------------------------------------------- 보기 파일
 
@@ -27,6 +27,8 @@ const VIEW_SHEETS = {
     name: '목록',
     columns: [
       { key: 'date', header: '작성일자', width: 12, numFmt: DATE },
+      { key: 'title', header: '제목', width: 18 },
+      { key: 'pageOf', header: '장', width: 6 },
       { key: 'summary', header: '내용', width: 36 },
       { key: 'name', header: '상호명', width: 26 },
       { key: 'supply', header: '금액', width: 14, numFmt: MONEY, sum: true },
@@ -44,6 +46,7 @@ const VIEW_SHEETS = {
     columns: [
       { key: 'txDate', header: '작성일자', width: 12, numFmt: DATE },
       { key: 'name', header: '상호명', width: 24 },
+      { key: 'title', header: '제목', width: 18 },
       { key: 'no', header: 'No', width: 5 },
       { key: 'date', header: '날짜', width: 9 },
       { key: 'itemName', header: '품목', width: 34 },
@@ -285,7 +288,7 @@ export function buildStatementWorkbook({ tx, items, supplier, receiver, printOpt
   const money = (v) => (Number(v) ? Number(v) : null);
   const stampSpots = [];
 
-  const half = (type, pageItems) => {
+  const half = (type, pageItems, pageIndex) => {
     const form = FORM[type];
     const b = box(form);
     // 제목 / No. / 보관용 / 작성일자
@@ -294,7 +297,9 @@ export function buildStatementWorkbook({ tx, items, supplier, receiver, printOpt
     ws.getCell(t, 1).font = { name: FONT, size: 16, bold: true, color: { argb: form }, underline: 'double' };
     const s = newRow(5.5);
     const third = Math.floor(nCols / 3);
-    put(s, [1, Math.max(1, Math.floor(nCols * 0.18))], 'No.', { color: form, size: 11, bold: true, border: { bottom: thin(form) } });
+    // No. 옆의 장 번호: 여러 장이면 '1 / 4', 한 장뿐이면 없음 — 인쇄 양식과 같다.
+    const noText = pages.length > 1 ? `No. ${pageIndex + 1} / ${pages.length}` : 'No.';
+    put(s, [1, Math.max(1, Math.floor(nCols * 0.18))], noText, { color: form, size: 11, bold: true, border: { bottom: thin(form) } });
     put(s, [third + 1, nCols - third], type === 'receiver' ? '(공급받는자 보관용)' : '(공급자 보관용)', { color: form, size: 8, align: 'center' });
     const dateCell = put(s, [Math.ceil(nCols * 0.7), nCols], null, { align: 'right', fill: 'FFECEEF3' });
     dateCell.value = { richText: [
@@ -368,10 +373,10 @@ export function buildStatementWorkbook({ tx, items, supplier, receiver, printOpt
   };
 
   pages.forEach((pageItems, p) => {
-    half('receiver', pageItems);
+    half('receiver', pageItems, p);
     const gap = newRow(6);
     for (let c = 1; c <= nCols; c += 1) ws.getCell(gap, c).border = { bottom: { style: 'dashed', color: { argb: 'FF999999' } } };
-    half('supplier', pageItems);
+    half('supplier', pageItems, p);
     if (p < pages.length - 1) ws.getRow(r).addPageBreak();
   });
 

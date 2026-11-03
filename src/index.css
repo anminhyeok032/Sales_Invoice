@@ -204,11 +204,40 @@ body {
   touch-action: none;   /* 터치로 잡았을 때 페이지가 대신 스크롤되지 않게 */
   user-select: none;
 }
+/* 끄는 동안에도 마우스 포인터는 기본 화살표로 둔다(손 모양으로 바뀌면 놓을 자리를 겨누기 어렵다). */
 body.is-row-dragging,
 body.is-row-dragging * {
-  cursor: grabbing !important;
+  cursor: default !important;
   user-select: none !important;
 }
+.drag-handle { cursor: default; padding-left: 2px !important; padding-right: 2px !important; }
+
+/* 이동 칸: 펼치기(▶) 상자와 잡기(⋮) 상자. 누를 곳이 보이도록 테두리를 그리고 크게. */
+.row-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+}
+.row-handle-box {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid #94a3b8;
+  border-radius: 5px;
+  background: #f8fafc;
+  color: #475569;
+  cursor: default;
+  line-height: 0;
+}
+.row-handle-box:hover { border-color: #2563eb; background: #eff6ff; color: #1d4ed8; }
+.row-expand-box { border-color: #93c5fd; background: #eff6ff; color: #2563eb; }
+.row-expand-box.is-open { background: #2563eb; border-color: #2563eb; color: #fff; }
+.row-handle-spacer { flex: none; width: 24px; }
 .drag-ghost {
   position: fixed;
   top: 0;
@@ -812,3 +841,61 @@ body.is-row-dragging * {
   padding: 0.1rem 0;
   font-size: 0.6875rem;
 }
+
+/* 거래 내역 수정 표: 장마다의 제목 줄 */
+.page-title-row > td { background: #eff6ff; }
+.data-table--compact .page-title-input { font-size: 0.8125rem; padding: 0.15rem 0.4rem; }
+
+/* 저장된 내역 목록: 장 단위로 나눠 저장한 명세서의 묶음 줄과 장 줄 */
+.history-group-row:not(.is-selected) > td { background: #f1f5f9; }
+.history-group-row > td { font-weight: 600; }
+.history-group-toggle { padding: 0 2px; margin-right: 2px; border: none; background: none; color: #2563eb; line-height: 0; vertical-align: middle; }
+.history-pages-badge {
+  display: inline-block; margin-right: 0.35rem; padding: 0 0.3rem; border-radius: 4px;
+  background: #dbeafe; color: #1d4ed8; font-size: 0.6875rem; font-weight: 600; vertical-align: 1px;
+}
+.history-page-row > td:first-child, .history-page-row > td:nth-child(2) { padding-left: 1.4rem; }
+.history-page-no { color: #64748b; font-size: 0.75rem; }
+.history-summary-sub { margin-left: 0.4rem; color: #94a3b8; font-size: 0.75rem; }
+
+/* 줄 클립보드에 복사해 둔 줄이 있을 때 표 위에 붙는 막대 */
+.row-clipboard-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem 0.6rem;
+  flex-wrap: wrap;
+  margin: 0 0 0.5rem;
+  padding: 0.35rem 0.6rem;
+  border-radius: 6px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  font-size: 0.8125rem;
+  color: #166534;
+}
+.row-clipboard-bar__source { color: #4d7c0f; }
+.row-clipboard-bar .btn { display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.15rem 0.5rem; font-size: 0.8125rem; }
+
+/* 거래 내역 수정 표: 제목 칸 오른쪽 끝의 칸 너비 조절 손잡이(엑셀처럼) */
+.data-table--compact th.th-resizable { position: relative; }
+.col-resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 7px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 2;
+  touch-action: none;
+}
+.col-resizer::after {
+  content: '';
+  position: absolute;
+  top: 20%;
+  bottom: 20%;
+  right: 2px;
+  width: 2px;
+  border-radius: 1px;
+  background: #cbd5e1;
+}
+.col-resizer:hover::after, body.is-col-resizing .col-resizer::after { background: #2563eb; }
+body.is-col-resizing, body.is-col-resizing * { cursor: col-resize !important; user-select: none !important; }

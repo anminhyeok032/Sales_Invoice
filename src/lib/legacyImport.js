@@ -41,6 +41,8 @@ function normalizeTransaction(raw) {
     month: num(raw.month),
     companyName,
     date: str(raw.date),
+    // 기존 프로그램에서 직접 쓰던 제목(gdb TRADFLST.JKYU). 예전에 만든 파일에는 없을 수 있다.
+    title: str(raw.title).trim(),
     items: Array.isArray(raw.items) ? raw.items.map(normalizeItem) : [],
   };
 }
@@ -61,7 +63,7 @@ function normalizeCompany(raw) {
   };
 }
 
-// 파일 내용 -> { transactions, companies, generatedAt }. 형식이 아니면 에러를 던진다.
+// 예전 방식 파일(tools/gdb/export_tradetax.py가 만든 tradetax-import.json) -> parseLegacyImportData
 export function parseLegacyImportFile(text) {
   let data;
   try {
@@ -69,9 +71,15 @@ export function parseLegacyImportFile(text) {
   } catch {
     throw new Error('JSON 파일이 아닙니다.');
   }
+  return parseLegacyImportData(data);
+}
+
+// 가져올 내용 -> { transactions, companies, generatedAt }. 형식이 아니면 에러를 던진다.
+// 보통은 Tradetax.gdb를 앱에서 바로 읽은 결과(legacyGdb.readTradetaxGdb)가 들어온다.
+export function parseLegacyImportData(data) {
   if (!data || data.format !== FORMAT) {
     throw new Error(
-      '이 앱이 아는 형식이 아닙니다. tools/gdb/export_tradetax.py --app 으로 만든 파일을 골라주세요.'
+      '이 앱이 아는 형식이 아닙니다. 기존 프로그램의 Tradetax.gdb 파일을 골라주세요.'
     );
   }
   if (!Array.isArray(data.transactions)) {
@@ -104,6 +112,18 @@ export function summarizeImport(parsed, existingTransactions, existingCompanies)
     maxYear: years.length ? Math.max(...years) : 0,
     newCompanies: parsed.companies.filter((c) => !existingNames.has(c.name)).length,
   };
+}
+
+// 명세서 합치기: 같은 id는 기존 프로그램 내용 그대로 다시 넣는다(앱에서 고친 것도 원래대로 돌아간다).
+// 앱에서 장으로 나눠 저장했던 기존 명세서는 1장이 원래 id를 이어 쓰고 나머지 장은 groupId로 이어져 있다 —
+// 1장만 바꾸면 나머지 장의 줄이 겹치므로, 그 묶음의 나머지 장도 같이 지운다.
+export function mergeLegacyTransactions(existing, incoming) {
+  const incomingIds = new Set(incoming.map((t) => t.id));
+  const byId = new Map(existing
+    .filter((t) => !(t.groupId && incomingIds.has(t.groupId) && t.id !== t.groupId))
+    .map((t) => [t.id, t]));
+  incoming.forEach((t) => byId.set(t.id, t));
+  return [...byId.values()];
 }
 
 // 거래처는 더하기만 한다. 이미 있는 상호는 손대지 않는다 — 사용자가 앱에서 고쳐둔
