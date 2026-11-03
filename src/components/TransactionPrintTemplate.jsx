@@ -1,7 +1,7 @@
 import React, { useLayoutEffect, useRef, useState } from 'react';
 import { PRINT_ROWS_PER_PAGE, itemDateLabel, computeTotals } from '../lib/transactionItems';
 import { printedNotes, printedUnit } from '../lib/statementView';
-import { INFO_COLS_MM, INFO_TOTAL_MM, ITEM_COLS, SUM_COLS, formatStatementDate } from '../lib/printLayout';
+import { FORM_GRID, formatStatementDate } from '../lib/printLayout';
 import { useTransparentStamp } from '../lib/stampImage';
 import useStore from '../store';
 
@@ -83,11 +83,18 @@ const TransactionPrintTemplate = React.forwardRef(({ data, receiver, supplier, d
   const formatCurrency = (val) => (val ? Number(val).toLocaleString() : '');
   const printedDate = formatStatementDate(date);
 
-  const partyCells = (p, withStamp) => ({
-    regNo: <td colSpan="5" className="st-value st-regno"><FitText maxFontSize={15} minFontSize={9}>{p.regNo}</FitText></td>,
-    name: <td colSpan="2" className="st-value"><FitText lines={2}>{p.name}</FitText></td>,
+  // 세 표가 같은 열 격자(FORM_GRID)를 쓴다 — 표를 건너는 세로선이 한 줄로 맞는다. 칸은 원래 표의 몇 번째 칸부터
+  // 몇 번째 칸까지인지로 적고, 격자에서 몇 열을 차지하는지(colSpan)는 FORM_GRID.span이 정한다.
+  const gridCols = <colgroup>{FORM_GRID.cols.map((w, i) => <col key={i} style={{ width: `${w}%` }} />)}</colgroup>;
+  const span = (table, from, to = from) => FORM_GRID.span(table, from, to);
+  const I = (from, to) => span('info', from, to);
+
+  // o: 공급자 칸은 0부터, 공급받는자 칸은 7부터(공급자/공급받는자 표는 7칸씩 두 벌 — printLayout.HALF_COLS_MM)
+  const partyCells = (p, withStamp, o) => ({
+    regNo: <td colSpan={I(o + 2, o + 6)} className="st-value st-regno"><FitText maxFontSize={15} minFontSize={9}>{p.regNo}</FitText></td>,
+    name: <td colSpan={I(o + 2, o + 3)} className="st-value"><FitText lines={2}>{p.name}</FitText></td>,
     president: (
-      <td className="st-value st-president">
+      <td colSpan={I(o + 6)} className="st-value st-president">
         <div className="st-president__inner">
           <FitText>{p.president}</FitText>
           <span className="st-in">(인)</span>
@@ -95,9 +102,14 @@ const TransactionPrintTemplate = React.forwardRef(({ data, receiver, supplier, d
         {withStamp && stampSrc && <img className="st-stamp" src={stampSrc} alt="" />}
       </td>
     ),
-    address: <td colSpan="5" className="st-value"><FitText lines={2}>{p.address}</FitText></td>,
-    businessType: <td className="st-value"><FitText>{p.businessType}</FitText></td>,
-    businessItem: <td colSpan="2" className="st-value"><FitText>{p.businessItem}</FitText></td>,
+    address: <td colSpan={I(o + 2, o + 6)} className="st-value"><FitText lines={2}>{p.address}</FitText></td>,
+    businessType: <td colSpan={I(o + 2)} className="st-value"><FitText>{p.businessType}</FitText></td>,
+    businessItem: <td colSpan={I(o + 5, o + 6)} className="st-value"><FitText>{p.businessItem}</FitText></td>,
+    // 항목명 칸들
+    vertical: (label) => <th rowSpan="4" colSpan={I(o)} className="st-vertical">{label}</th>,
+    label: (text) => <th colSpan={I(o + 1)}>{text}</th>,
+    daepyo: <th colSpan={I(o + 4, o + 5)}>대 표</th>,
+    jongmok: <th colSpan={I(o + 3, o + 4)}>종 목</th>,
   });
 
   // No. 옆의 장 번호: 여러 장을 한 번에 찍으면 '1 / 4'처럼. 한 장뿐이면 비운다.
@@ -114,8 +126,8 @@ const TransactionPrintTemplate = React.forwardRef(({ data, receiver, supplier, d
     // 합계 줄은 장마다 그 장에 찍힌 줄의 합계
     const totals = computeTotals(pageItems);
 
-    const S = partyCells(supplier, true);
-    const R = partyCells(receiver, false);
+    const S = partyCells(supplier, true, 0);
+    const R = partyCells(receiver, false, 7);
 
     // 공급자 계좌(있을 때만): 테두리 밖 왼쪽 아래에 한 줄. 그만큼 칸 높이를 늘린다(.has-foot).
     const account = String(supplier?.account || '').trim();
@@ -133,58 +145,51 @@ const TransactionPrintTemplate = React.forwardRef(({ data, receiver, supplier, d
 
         <div className="statement-frame">
           <table className="st-info">
-            <colgroup>{INFO_COLS_MM.map((w, i) => <col key={i} style={{ width: `${(w / INFO_TOTAL_MM) * 100}%` }} />)}</colgroup>
+            {gridCols}
             <tbody>
               <tr className="st-row-regno">
-                <th rowSpan="4" className="st-vertical">공급자</th>
-                <th>등록번호</th>
+                {S.vertical('공급자')}
+                {S.label('등록번호')}
                 {S.regNo}
-                <th rowSpan="4" className="st-vertical">공급받는자</th>
-                <th>등록번호</th>
+                {R.vertical('공급받는자')}
+                {R.label('등록번호')}
                 {R.regNo}
               </tr>
               <tr className="st-row-name">
-                <th>상&nbsp;&nbsp;호</th>
+                {S.label(<>상&nbsp;&nbsp;호</>)}
                 {S.name}
-                <th colSpan="2">대 표</th>
+                {S.daepyo}
                 {S.president}
-                <th>상&nbsp;&nbsp;호</th>
+                {R.label(<>상&nbsp;&nbsp;호</>)}
                 {R.name}
-                <th colSpan="2">대 표</th>
+                {R.daepyo}
                 {R.president}
               </tr>
               <tr className="st-row-address">
-                <th>주&nbsp;&nbsp;소</th>
+                {S.label(<>주&nbsp;&nbsp;소</>)}
                 {S.address}
-                <th>주&nbsp;&nbsp;소</th>
+                {R.label(<>주&nbsp;&nbsp;소</>)}
                 {R.address}
               </tr>
               <tr className="st-row-type">
-                <th>업&nbsp;&nbsp;태</th>
+                {S.label(<>업&nbsp;&nbsp;태</>)}
                 {S.businessType}
-                <th colSpan="2">종 목</th>
+                {S.jongmok}
                 {S.businessItem}
-                <th>업&nbsp;&nbsp;태</th>
+                {R.label(<>업&nbsp;&nbsp;태</>)}
                 {R.businessType}
-                <th colSpan="2">종 목</th>
+                {R.jongmok}
                 {R.businessItem}
               </tr>
             </tbody>
           </table>
 
           <table className="st-items">
-            <colgroup>{ITEM_COLS.map((w, i) => <col key={i} style={{ width: `${w}%` }} />)}</colgroup>
+            {gridCols}
             <thead>
               <tr>
-                <th>날짜</th>
-                <th>품&nbsp;&nbsp;&nbsp;&nbsp;목</th>
-                <th>규&nbsp;&nbsp;&nbsp;&nbsp;격</th>
-                <th>단위</th>
-                <th>수 량</th>
-                <th>단 가</th>
-                <th>공급가액</th>
-                <th>세 액</th>
-                <th>비 고</th>
+                {['날짜', <>품&nbsp;&nbsp;&nbsp;&nbsp;목</>, <>규&nbsp;&nbsp;&nbsp;&nbsp;격</>, '단위', '수 량', '단 가', '공급가액', '세 액', '비 고']
+                  .map((h, i) => <th key={i} colSpan={span('items', i)}>{h}</th>)}
               </tr>
             </thead>
             <tbody>
@@ -192,15 +197,15 @@ const TransactionPrintTemplate = React.forwardRef(({ data, receiver, supplier, d
                 const showDate = !(index > 0 && item.date && item.date === displayItems[index - 1].date);
                 return (
                   <tr key={index}>
-                    <td className="text-center"><FitText>{showDate ? itemDateLabel(item.date) : ''}</FitText></td>
-                    <td><FitText>{item.name}</FitText></td>
-                    <td><FitText>{item.spec}</FitText></td>
-                    <td className="text-center"><FitText>{printedUnit(item.unit)}</FitText></td>
-                    <td className="text-right"><FitText>{formatCurrency(item.qty)}</FitText></td>
-                    <td className="text-right"><FitText>{formatCurrency(item.price)}</FitText></td>
-                    <td className="text-right"><FitText>{formatCurrency(item.supply)}</FitText></td>
-                    <td className="text-right"><FitText>{formatCurrency(item.tax)}</FitText></td>
-                    <td><FitText>{item._appendedNote !== undefined ? item._appendedNote : item.note}</FitText></td>
+                    <td colSpan={span('items', 0)} className="text-center"><FitText>{showDate ? itemDateLabel(item.date) : ''}</FitText></td>
+                    <td colSpan={span('items', 1)}><FitText>{item.name}</FitText></td>
+                    <td colSpan={span('items', 2)}><FitText>{item.spec}</FitText></td>
+                    <td colSpan={span('items', 3)} className="text-center"><FitText>{printedUnit(item.unit)}</FitText></td>
+                    <td colSpan={span('items', 4)} className="text-right"><FitText>{formatCurrency(item.qty)}</FitText></td>
+                    <td colSpan={span('items', 5)} className="text-right"><FitText>{formatCurrency(item.price)}</FitText></td>
+                    <td colSpan={span('items', 6)} className="text-right"><FitText>{formatCurrency(item.supply)}</FitText></td>
+                    <td colSpan={span('items', 7)} className="text-right"><FitText>{formatCurrency(item.tax)}</FitText></td>
+                    <td colSpan={span('items', 8)}><FitText>{item._appendedNote !== undefined ? item._appendedNote : item.note}</FitText></td>
                   </tr>
                 );
               })}
@@ -208,18 +213,18 @@ const TransactionPrintTemplate = React.forwardRef(({ data, receiver, supplier, d
           </table>
 
           <table className="st-sum">
-            <colgroup>{SUM_COLS.map((w, i) => <col key={i} style={{ width: `${w}%` }} />)}</colgroup>
+            {gridCols}
             <tbody>
               <tr>
-                <th>미수금</th>
-                <td />
-                <th>금액</th>
-                <td className="text-right"><FitText>{formatCurrency(totals.supply)}</FitText></td>
-                <th>세액</th>
-                <td className="text-right"><FitText>{formatCurrency(totals.tax)}</FitText></td>
-                <th>합계</th>
-                <td className="text-right"><FitText>{formatCurrency(totals.total)}</FitText></td>
-                <th className="st-receiver-sign"><span>인수자</span><span>(인)</span></th>
+                <th colSpan={span('sum', 0)}>미수금</th>
+                <td colSpan={span('sum', 1)} />
+                <th colSpan={span('sum', 2)}>금액</th>
+                <td colSpan={span('sum', 3)} className="text-right"><FitText>{formatCurrency(totals.supply)}</FitText></td>
+                <th colSpan={span('sum', 4)}>세액</th>
+                <td colSpan={span('sum', 5)} className="text-right"><FitText>{formatCurrency(totals.tax)}</FitText></td>
+                <th colSpan={span('sum', 6)}>합계</th>
+                <td colSpan={span('sum', 7)} className="text-right"><FitText>{formatCurrency(totals.total)}</FitText></td>
+                <th colSpan={span('sum', 8)} className="st-receiver-sign"><span>인수자</span><span>(인)</span></th>
               </tr>
             </tbody>
           </table>

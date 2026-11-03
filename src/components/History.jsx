@@ -1,10 +1,10 @@
-import React, { useState, useRef, useMemo } from 'react';
+import React, { useState, useRef, useMemo, useEffect } from 'react';
 import useStore, { resolveSupplier } from '../store';
 import { openPrintPreview } from '../lib/printPreview';
 import { useItemFilters } from '../hooks/useItemFilters';
 import { filterItems, isFilterActive, filtersKey } from '../lib/itemTableView';
 import TransactionPrintTemplate from './TransactionPrintTemplate';
-import { Printer, Trash2, Plus, Save, Link2, Unlink, DatabaseBackup, Download, Upload, FileSpreadsheet, ChevronDown, ChevronRight, Copy } from 'lucide-react';
+import { Printer, Trash2, Plus, Save, Link2, Unlink, DatabaseBackup, Download, Upload, FileSpreadsheet, ChevronDown, ChevronRight, Copy, RefreshCw } from 'lucide-react';
 import {
   useJsonBackupStatus, connectJsonBackup, reconnectJsonBackup, disconnectJsonBackup,
   downloadBackup, parseBackup, summarizeRestore, applyRestore,
@@ -20,6 +20,7 @@ import { receiverInfo } from '../lib/companyLookup';
 import { listContext, summarizeForList, receiverMatchFor } from '../lib/statementView';
 import { parseLegacyImportFile, parseLegacyImportData, summarizeImport, mergeCompanies } from '../lib/legacyImport';
 import { readTradetaxGdb } from '../lib/legacyGdb';
+import { isGdbLinkSupported, loadGdbLink, pickGdbLink, clearGdbLink, readGdbLink } from '../lib/legacyGdbLink';
 import { toDateKey, isWithinRange } from '../lib/dateRange';
 import TransactionItemsTable from './TransactionItemsTable';
 import CollapsibleCard from './CollapsibleCard';
@@ -337,7 +338,47 @@ function History() {
     const file = event.target.files?.[0];
     event.target.value = '';   // 같은 파일을 다시 골라도 change가 걸리도록
     if (!file) return;
+    await importFromFile(file);
+  };
 
+  // 기존 프로그램 데이터 파일 연결(lib/legacyGdbLink.js): 한 번 골라 두면 '다시 읽기' 단추로 그 파일을 새로 읽는다.
+  const [gdbLink, setGdbLink] = useState(null);
+  const [gdbReadAt, setGdbReadAt] = useState('');
+  useEffect(() => {
+    let alive = true;
+    loadGdbLink().then((h) => { if (alive) setGdbLink(h); });
+    return () => { alive = false; };
+  }, []);
+  const connectGdb = async () => {
+    setImportError('');
+    try {
+      const h = await pickGdbLink();
+      if (!h) return;
+      setGdbLink(h);
+      await rereadGdb(h);
+    } catch (err) {
+      setImportError('파일을 연결하지 못했습니다: ' + err.message);
+    }
+  };
+  const rereadGdb = async (handle = gdbLink) => {
+    if (!handle) return;
+    setImportError('');
+    setImportNotice('');
+    try {
+      const file = await readGdbLink(handle);
+      if (await importFromFile(file)) setGdbReadAt(new Date().toLocaleTimeString());
+    } catch (err) {
+      setImportError(err.message);
+    }
+  };
+  const disconnectGdb = async () => {
+    await clearGdbLink();
+    setGdbLink(null);
+    setGdbReadAt('');
+  };
+
+  // 파일 하나를 읽어 가져온다(확인 창을 거친다). 가져왔으면 true.
+  const importFromFile = async (file) => {
     setImportError('');
     setImportNotice('');
     try {
@@ -362,7 +403,7 @@ function History() {
         '',
         '진행할까요?',
       ].filter(Boolean);
-      if (!window.confirm(lines.join('\n'))) return;
+      if (!window.confirm(lines.join('\n'))) return false;
 
       importTransactions(parsed.transactions);
       if (s.newCompanies > 0) {
@@ -375,8 +416,10 @@ function History() {
         `거래명세서 ${s.total.toLocaleString()}건을 가져왔습니다` +
         (s.newCompanies > 0 ? `, 거래처 ${s.newCompanies}곳 추가.` : '.')
       );
+      return true;
     } catch (err) {
       setImportError('가져오기에 실패했습니다: ' + err.message);
+      return false;
     }
   };
 
@@ -553,11 +596,34 @@ function History() {
         </div>
 
         <div style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-          <button className="btn" onClick={() => importInputRef.current?.click()}>
-            <DatabaseBackup size={16} /> 기존 프로그램 데이터 가져오기
+          {isGdbLinkSupported() && (gdbLink ? (
+            <>
+              <button className="btn btn-primary" onClick={() => rereadGdb()}
+                title="연결해 둔 기존 프로그램 데이터 파일을 지금 내용으로 다시 읽어 가져옵니다 (먼저 건수를 보여 줍니다)">
+                <RefreshCw size={16} /> 기존 프로그램 데이터 다시 읽기
+              </button>
+              <span style={{ fontSize: '0.8125rem', color: '#334155' }}>
+                연결된 파일: <b>{gdbLink.name}</b>{gdbReadAt && ` · ${gdbReadAt}에 읽음`}
+              </span>
+              <button className="btn" onClick={connectGdb} title="다른 .gdb 파일을 골라 연결합니다">
+                <Link2 size={16} /> 다른 파일 연결
+              </button>
+              <button className="btn" onClick={disconnectGdb} title="연결만 끊습니다. 가져온 내역은 그대로 남습니다">
+                <Unlink size={16} /> 연결 해제
+              </button>
+            </>
+          ) : (
+            <button className="btn" onClick={connectGdb}
+              title="기존 프로그램의 데이터 파일(Tradetax.gdb)을 한 번 골라 연결해 두면, 다음부터는 '다시 읽기' 단추로 바로 가져옵니다">
+              <Link2 size={16} /> 기존 프로그램 데이터 파일 연결
+            </button>
+          ))}
+          <button className="btn" onClick={() => importInputRef.current?.click()}
+            title="연결하지 않고 파일을 한 번 골라 가져옵니다 (.gdb 또는 예전에 만든 .json)">
+            <DatabaseBackup size={16} /> {isGdbLinkSupported() ? '파일 골라 한 번만 가져오기' : '기존 프로그램 데이터 가져오기'}
           </button>
-          <span style={{ fontSize: '0.8125rem', color: '#64748b' }}>
-            기존 프로그램의 데이터 파일 <b>Tradetax.gdb</b>를 고르면 예전 거래명세서(제목 포함)가 이 목록에 들어옵니다. 이미 있는 것은 기존 프로그램 내용으로 다시 덮어씁니다.
+          <span style={{ fontSize: '0.8125rem', color: '#64748b', width: '100%' }}>
+            기존 프로그램의 데이터 파일 <b>Tradetax.gdb</b>에서 예전 거래명세서(제목 포함)를 가져옵니다. 이미 있는 것은 기존 프로그램 내용으로 다시 덮어쓰고, 앱에서 쓴 명세서는 그대로 둡니다.
           </span>
           <input
             ref={importInputRef}

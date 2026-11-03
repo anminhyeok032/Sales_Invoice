@@ -20,3 +20,36 @@ export const INFO_TOTAL_MM = INFO_COLS_MM.reduce((sum, w) => sum + w, 0);
 export const ITEM_COLS = [6.89, 26.10, 17.01, 3.96, 7.62, 9.53, 11.73, 9.38, 7.77];
 // 합계 줄: 미수금 (값) 금액 (값) 세액 (값) 합계 (값) 인수자·(인) (%)
 export const SUM_COLS = [6.89, 15.69, 4.84, 15.10, 4.84, 14.22, 4.84, 16.42, 17.16];
+
+// 세 표(공급자/공급받는자, 품목, 합계)가 함께 쓰는 하나의 열 격자.
+// 표마다 따로 칸 폭을 주면 같은 자리여야 할 세로선이 표마다 0.1~0.2mm씩 어긋나서(예: '공급받는자' 칸과 '단위' 칸,
+// '수량'과 '합계', 공급받는자 '대표'와 '공급가액') 한 줄이 꺾여 보인다. 그래서 세 표의 경계를 모두 모아
+// 1mm보다 가까운 것은 한 자리로 맞추고(공급자/공급받는자 표 = 스캔에서 잰 자리를 따른다), 모든 표가 이 격자를
+// 같이 쓰면서 칸은 colSpan으로 여러 열을 차지한다. 그러면 표를 건너는 세로선이 정확히 한 줄이 된다.
+//   FORM_GRID.cols: 열 폭(%)    FORM_GRID.span(표, 처음 칸, 마지막 칸): 그 칸들이 차지하는 열 수
+//   표: 'info'(14칸 = HALF_COLS_MM 두 벌) / 'items'(ITEM_COLS 9칸) / 'sum'(SUM_COLS 9칸)
+const SNAP_PCT = (1 / 190) * 100;   // 테두리 안 폭 190mm 기준 1mm
+const cuts = (widths) => {
+  const total = widths.reduce((a, b) => a + b, 0);
+  let acc = 0;
+  return [0, ...widths.map((w) => { acc += w; return (acc / total) * 100; })];
+};
+function buildFormGrid() {
+  const points = [];
+  const snapped = {};
+  [['info', INFO_COLS_MM], ['items', ITEM_COLS], ['sum', SUM_COLS]].forEach(([name, widths]) => {
+    snapped[name] = cuts(widths).map((x) => {
+      const near = points.find((p) => Math.abs(p - x) < SNAP_PCT);
+      if (near !== undefined) return near;
+      points.push(x);
+      return x;
+    });
+  });
+  const sorted = [...points].sort((a, b) => a - b);
+  const index = Object.fromEntries(Object.entries(snapped).map(([name, xs]) => [name, xs.map((x) => sorted.indexOf(x))]));
+  return {
+    cols: sorted.slice(1).map((x, i) => x - sorted[i]),
+    span: (table, from, to = from) => index[table][to + 1] - index[table][from],
+  };
+}
+export const FORM_GRID = buildFormGrid();
