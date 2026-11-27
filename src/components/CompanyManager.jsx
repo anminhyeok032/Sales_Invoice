@@ -1,14 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import useStore from '../store';
+import useStore, { isCompaniesDirty } from '../store';
 import { Plus, Trash2, Save, X, Link2, Unlink, RefreshCw, Star, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
 import {
-  isFileSystemAccessSupported,
-  pickExcelFile,
-  loadCompanyHandle,
-  clearCompanyHandle,
-  ensurePermission,
-  readCompaniesFromHandle,
-  writeCompaniesToHandle,
+  isFileSystemAccessSupported, pickExcelFile, loadCompanyHandle, clearCompanyHandle, ensurePermission, readCompaniesFromHandle, writeCompaniesToHandle, withTimeout, parseWorkbookToCompanies,
 } from '../lib/companyExcelSync';
 import CollapsibleCard from './CollapsibleCard';
 import { useTransparentStamp } from '../lib/stampImage';
@@ -18,8 +12,10 @@ function CompanyManager() {
   const {
     suppliers, defaultSupplierId, addSupplier, updateSupplier, deleteSupplier, setDefaultSupplier,
     companies, addCompany, updateCompany, deleteCompany, setCompanies,
-    companyExcelFileName, setCompanyExcelFileName, companiesDirty, setCompaniesDirty,
+    companyExcelFileName, setCompanyExcelFileName, markCompaniesSynced,
   } = useStore();
+  // 업체목록.xls와 마지막으로 맞춘 목록과 지금 목록이 다른지(고쳤다가 되돌리면 다시 '저장할 것 없음').
+  const companiesDirty = useStore(isCompaniesDirty);
 
   // 우리 회사(공급자)는 여러 개. 하나를 골라 편집한다. 입력한 내용은 바로 저장소에 반영된다.
   // (예전에는 이 화면 안에 사본을 두고 "저장"을 눌러야 반영했는데, 저장을 누르지 않고 다른 탭으로
@@ -30,7 +26,8 @@ function CompanyManager() {
 
   // --- Excel file sync (거래처 목록 <-> 업체목록.xls) ---
   const fileHandleRef = useRef(null);
-  const [syncStatus, setSyncStatus] = useState('checking'); // checking | unsupported | disconnected | needs-permission | connected
+  // checking(확인 중, 최대 몇 초) | unsupported | disconnected | needs-permission | connected | error(확인 실패)
+  const [syncStatus, setSyncStatus] = useState('checking');
   const [syncError, setSyncError] = useState('');
 
   useEffect(() => {
@@ -38,29 +35,42 @@ function CompanyManager() {
       setSyncStatus('unsupported');
       return;
     }
+    // 확인은 길어야 몇 초다. 저장소나 크롬이 답하지 않거나 오류가 나면 '확인 중'에 멈춰 있지 않고 '확인 실패'로
+    // 바꿔서 다시 연결·불러오기 단추를 보인다(예전에는 여기서 멈추면 아무 단추도 없었다).
+    let alive = true;
     (async () => {
-      const handle = await loadCompanyHandle();
-      if (!handle) {
-        setSyncStatus('disconnected');
-        return;
-      }
-      fileHandleRef.current = handle;
-      setCompanyExcelFileName(handle.name);
-      const granted = (await handle.queryPermission({ mode: 'readwrite' })) === 'granted';
-      if (granted) {
-        setSyncStatus('connected');
-        await loadFromFile(handle);
-      } else {
-        setSyncStatus('needs-permission');
+      try {
+        const handle = await withTimeout(loadCompanyHandle(), 5000, '연동 정보를 읽는 데 너무 오래 걸립니다');
+        if (!alive) return;
+        if (!handle) {
+          setSyncStatus('disconnected');
+          return;
+        }
+        fileHandleRef.current = handle;
+        setCompanyExcelFileName(handle.name);
+        const granted = (await withTimeout(handle.queryPermission({ mode: 'readwrite' }), 5000,
+          '파일 허락을 확인하는 데 너무 오래 걸립니다')) === 'granted';
+        if (!alive) return;
+        if (granted) {
+          setSyncStatus('connected');
+          await loadFromFile(handle);
+        } else {
+          setSyncStatus('needs-permission');
+        }
+      } catch (err) {
+        if (!alive) return;
+        setSyncStatus('error');
+        setSyncError(`엑셀 연동 상태를 확인하지 못했습니다 (${err.message}). 아래 단추로 다시 연결하거나 엑셀에서 불러오세요.`);
       }
     })();
+    return () => { alive = false; };
   }, []);
 
   const loadFromFile = async (handle) => {
     try {
       const parsed = await readCompaniesFromHandle(handle);
       setCompanies(parsed);
-      setCompaniesDirty(false);
+      markCompaniesSynced(parsed);
       setSyncError('');
     } catch (err) {
       setSyncError('엑셀 파일을 읽는 중 오류가 발생했습니다: ' + err.message);
@@ -78,6 +88,23 @@ function CompanyManager() {
       if (err.name !== 'AbortError') {
         setSyncError('파일 연결에 실패했습니다: ' + err.message);
       }
+    }
+  };
+
+  // 연동하지 않고 엑셀 파일 하나에서 거래처 목록을 불러온다(어느 상태에서든, 자동 연동이 안 되는 브라우저에서도).
+  const importInputRef = useRef(null);
+  const handleImportOnce = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    try {
+      const parsed = parseWorkbookToCompanies(await file.arrayBuffer());
+      if (!parsed.length) throw new Error('거래처를 찾지 못했습니다. 업체목록 양식의 엑셀 파일인지 확인하세요.');
+      if (!window.confirm(`${file.name}의 거래처 ${parsed.length}곳으로 지금 목록(${companies.length}곳)을 바꿀까요?`)) return;
+      setCompanies(parsed);
+      setSyncError('');
+    } catch (err) {
+      setSyncError('엑셀에서 불러오지 못했습니다: ' + err.message);
     }
   };
 
@@ -103,7 +130,7 @@ function CompanyManager() {
     if (!fileHandleRef.current) return;
     try {
       await writeCompaniesToHandle(fileHandleRef.current, companies);
-      setCompaniesDirty(false);
+      markCompaniesSynced(companies);
       setSyncError('');
     } catch (err) {
       setSyncError('엑셀 파일에 저장하는 중 오류가 발생했습니다: ' + err.message);
@@ -115,7 +142,6 @@ function CompanyManager() {
     fileHandleRef.current = null;
     setCompanyExcelFileName('');
     setSyncStatus('disconnected');
-    setCompaniesDirty(false);
     setSyncError('');
   };
 
@@ -183,7 +209,6 @@ function CompanyManager() {
   // --- 거래처 목록 (공급받는자) — local edits only mark the list dirty; saving to excel is a manual action ---
   const handleAddCompany = () => {
     addCompany({ name: '새 회사', regNo: '', president: '', address: '', businessType: '', businessItem: '', phone: '' });
-    if (syncStatus === 'connected') setCompaniesDirty(true);
     // 새 거래처는 목록 맨 위에 들어간다. 정렬이 걸려 있으면 엉뚱한 자리로 가서 못 찾으므로 정렬을 풀고,
     // 곧바로 그 줄의 상호 칸에 커서를 둔다.
     setCompanySort({ key: '', dir: 'asc' });
@@ -196,12 +221,10 @@ function CompanyManager() {
 
   const handleUpdateCompany = (id, patch) => {
     updateCompany(id, patch);
-    if (syncStatus === 'connected') setCompaniesDirty(true);
   };
 
   const handleDeleteCompany = (id) => {
     deleteCompany(id);
-    if (syncStatus === 'connected') setCompaniesDirty(true);
   };
 
   return (
@@ -323,7 +346,15 @@ function CompanyManager() {
           padding: '0.75rem', backgroundColor: '#f8fafc', borderRadius: '6px', flexWrap: 'wrap'
         }}>
           {syncStatus === 'checking' && (
-            <span style={{ fontSize: '0.875rem', color: '#64748b' }}>엑셀 연동 상태 확인 중...</span>
+            <span style={{ fontSize: '0.875rem', color: '#64748b', display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+              <RefreshCw size={14} className="spin" /> 엑셀 연동 상태 확인 중… (몇 초 안에 끝납니다)
+            </span>
+          )}
+          {syncStatus === 'error' && (
+            <>
+              <span style={{ fontSize: '0.875rem', color: '#dc2626', fontWeight: 500 }}>엑셀 연동 확인 실패 — 지금은 연동되어 있지 않습니다.</span>
+              <button className="btn btn-primary" onClick={handleConnectExcel}><Link2 size={16} /> 엑셀 파일 다시 연결</button>
+            </>
           )}
           {syncStatus === 'unsupported' && (
             <span style={{ fontSize: '0.875rem', color: '#64748b' }}>
@@ -341,7 +372,8 @@ function CompanyManager() {
               <span style={{ fontSize: '0.875rem', color: '#b45309' }}>
                 연결된 파일({companyExcelFileName})에 대한 접근 권한이 필요합니다.
               </span>
-              <button className="btn" onClick={handleReconnectPermission}><Link2 size={16} /> 다시 연결</button>
+              <button className="btn btn-primary" onClick={handleReconnectPermission}><Link2 size={16} /> 다시 연결</button>
+              <button className="btn" onClick={handleConnectExcel}><Link2 size={16} /> 다른 파일 연결</button>
             </>
           )}
           {syncStatus === 'connected' && (
@@ -354,6 +386,13 @@ function CompanyManager() {
               <button className="btn" onClick={handleDisconnectExcel}><Unlink size={16} /> 연동 해제</button>
             </>
           )}
+          {syncStatus !== 'connected' && syncStatus !== 'checking' && (
+            <button className="btn" onClick={() => importInputRef.current?.click()}
+              title="연동하지 않고 엑셀 파일(업체목록 양식) 하나에서 거래처 목록을 불러옵니다">
+              <RefreshCw size={16} /> 엑셀에서 한 번 불러오기
+            </button>
+          )}
+          <input ref={importInputRef} type="file" accept=".xls,.xlsx" onChange={handleImportOnce} style={{ display: 'none' }} />
           {syncError && <span style={{ fontSize: '0.875rem', color: 'red', width: '100%' }}>{syncError}</span>}
         </div>}
       >

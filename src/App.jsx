@@ -3,7 +3,7 @@ import NewTransaction from './components/NewTransaction';
 import History from './components/History';
 import CompanyManager from './components/CompanyManager';
 import { FileSpreadsheet, History as HistoryIcon, Building2 } from 'lucide-react';
-import useStore, { initTransactionPersistence } from './store';
+import useStore, { initTransactionPersistence, isCompaniesDirty } from './store';
 import { initJsonBackup } from './lib/jsonBackup';
 import { initExcelBackup } from './lib/transactionExcelSync';
 
@@ -16,6 +16,9 @@ function App() {
   // 저장된 내역은 localStorage가 아니라 IndexedDB에 있다. 앱이 뜨면 한 번 읽어온다.
   useEffect(() => {
     // JSON 백업·엑셀 보기 파일 자동 저장은 내역을 다 읽은 뒤에 켠다(빈 목록으로 파일을 덮지 않게).
+    // 브라우저가 저장 공간이 모자랄 때 이 앱의 데이터(저장된 내역·연결 정보)를 지우지 않도록 보호를 요청한다.
+    // 크롬은 자주 쓰는(즐겨찾기한) 사이트에만 조용히 허락한다 — 거절돼도 앱은 그대로 동작한다.
+    navigator.storage?.persist?.().catch(() => {});
     initTransactionPersistence()
       .then(() => Promise.all([initJsonBackup(), initExcelBackup()]))
       .catch((err) => {
@@ -25,7 +28,7 @@ function App() {
 
   useEffect(() => {
     const handleBeforeUnload = (e) => {
-      if (useStore.getState().companiesDirty) {
+      if (isCompaniesDirty(useStore.getState())) {
         e.preventDefault();
         e.returnValue = '';
       }
@@ -35,7 +38,7 @@ function App() {
   }, []);
 
   const switchTab = (tab) => {
-    if (activeTab === 'companies' && tab !== 'companies' && useStore.getState().companiesDirty) {
+    if (activeTab === 'companies' && tab !== 'companies' && isCompaniesDirty(useStore.getState())) {
       const confirmed = window.confirm('거래처 목록에 저장하지 않은 변경사항이 있습니다. 저장하지 않고 이동하시겠습니까?');
       if (!confirmed) return;
     }

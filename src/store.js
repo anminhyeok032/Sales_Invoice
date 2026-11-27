@@ -167,8 +167,11 @@ const useStore = create(
       // Company excel file sync (File System Access API handle info; the handle itself lives in IndexedDB)
       companyExcelFileName: '',
       setCompanyExcelFileName: (name) => set({ companyExcelFileName: name }),
-      companiesDirty: false,
-      setCompaniesDirty: (dirty) => set({ companiesDirty: dirty }),
+      // 업체목록.xls와 마지막으로 맞춘(읽었거나 저장한) 거래처 목록(JSON). 연동 중일 때 지금 목록이 이것과 다르면
+      // '저장하지 않은 변경'이다(isCompaniesDirty). 예전에는 '무엇을 고쳤다' 표시(companiesDirty)를 따로 들고 있었는데,
+      // 그 표시가 브라우저에 남아 크롬을 다시 켠 뒤(파일 허락이 꺼져 다시 읽지 못함)에도 고친 것 없이 경고가 떴다.
+      companiesSyncedJson: '',
+      markCompaniesSynced: (companies) => set({ companiesSyncedJson: JSON.stringify(companies) }),
 
       // transactions structure:
       // [{ id: string, year: number, month: number, companyName: string, date: string, items: array }]
@@ -273,7 +276,9 @@ const useStore = create(
       storage: createJSONStorage(() => safeStorage),
       // v1: 공급자가 myCompany 하나에서 suppliers 목록으로 바뀌었다.
       // v2: 새로 합칠 때의 기본 방식을 수량·가공시간 모두 합산으로 통일(예전 기본값 '큰 값'으로 저장된 설정도 바꾼다).
-      version: 2,
+      // v3: companiesDirty 표시를 없애고 마지막으로 맞춘 목록과 비교한다. 올릴 때는 지금 목록을 맞춘 것으로 본다
+      //     (남아 있던 표시는 대부분 근거 없이 남은 것이라 — 그대로 두면 계속 경고가 뜬다).
+      version: 3,
       migrate: (persisted, version) => {
         let next = persisted;
         if (version < 1 && next && next.myCompany) {
@@ -285,6 +290,10 @@ const useStore = create(
           };
         }
         if (version < 2 && next) next = { ...next, mergeOptions: { qty: 'sum', time: 'sum' } };
+        if (version < 3 && next) {
+          const { companiesDirty, ...rest } = next;   // eslint-disable-line no-unused-vars
+          next = { ...rest, companiesSyncedJson: JSON.stringify(rest.companies || []) };
+        }
         return next;
       },
       // 저장된 내역은 용량이 커서 localStorage에 넣지 않는다 (transactionDb.js).
@@ -412,6 +421,11 @@ if (typeof window !== 'undefined') {
     if (event.storageArea !== localStorage) return;
     if (event.key === 'invoice-storage' || event.key === null) useStore.persist.rehydrate();
   });
+}
+
+// 거래처 목록에 업체목록.xls로 아직 저장하지 않은 변경이 있는지. 연동하지 않았으면 언제나 false.
+export function isCompaniesDirty(state) {
+  return Boolean(state.companyExcelFileName) && state.companiesSyncedJson !== JSON.stringify(state.companies);
 }
 
 export default useStore;

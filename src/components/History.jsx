@@ -4,13 +4,13 @@ import { openPrintPreview } from '../lib/printPreview';
 import { useItemFilters } from '../hooks/useItemFilters';
 import { filterItems, isFilterActive, filtersKey } from '../lib/itemTableView';
 import TransactionPrintTemplate from './TransactionPrintTemplate';
-import { Printer, Trash2, Plus, Save, Link2, Unlink, DatabaseBackup, Download, Upload, FileSpreadsheet, ChevronDown, ChevronRight, Copy, RefreshCw } from 'lucide-react';
+import { Printer, Trash2, Plus, Save, Link2, Unlink, DatabaseBackup, Download, Upload, FileSpreadsheet, ChevronDown, ChevronRight, Copy, RefreshCw, Settings, CheckCircle2 } from 'lucide-react';
 import {
-  useJsonBackupStatus, connectJsonBackup, reconnectJsonBackup, disconnectJsonBackup,
+  useJsonBackupStatus, reconnectJsonBackup, disconnectJsonBackup,
   downloadBackup, parseBackup, summarizeRestore, applyRestore,
 } from '../lib/jsonBackup';
 import {
-  useExcelBackupStatus, connectExcelBackup, reconnectExcelBackup, disconnectExcelBackup,
+  useExcelBackupStatus, connectExcelBackup, connectExistingExcel, reconnectExcelBackup, disconnectExcelBackup, writeExcelNow,
 } from '../lib/transactionExcelSync';
 import { buildViewWorkbook, buildStatementWorkbook, downloadWorkbook, stamped } from '../lib/excelViewWriter';
 import { stampToPng } from '../lib/stampImage';
@@ -67,7 +67,7 @@ function currentPeriodRange() {
 function History() {
   const {
     transactions, transactionsLoaded, lastSaved, companies, deleteTransaction, deleteTransactions, saveStatement,
-    importTransactions, setCompanies, setCompaniesDirty,
+    importTransactions, setCompanies,
   } = useStore();
   const [selectedTx, setSelectedTx] = useState(null);
   // 저장할 때 골랐던 공급자로 다시 찍는다. 예전 프로그램에서 가져온 내역처럼 기록이
@@ -341,6 +341,17 @@ function History() {
     await importFromFile(file);
   };
 
+  // '백업·가져오기' 펼침은 바깥을 누르면 접는다.
+  const toolsMoreRef = useRef(null);
+  useEffect(() => {
+    const onDown = (e) => {
+      const el = toolsMoreRef.current;
+      if (el?.open && !el.contains(e.target)) el.open = false;
+    };
+    document.addEventListener('pointerdown', onDown);
+    return () => document.removeEventListener('pointerdown', onDown);
+  }, []);
+
   // 기존 프로그램 데이터 파일 연결(lib/legacyGdbLink.js): 한 번 골라 두면 '다시 읽기' 단추로 그 파일을 새로 읽는다.
   const [gdbLink, setGdbLink] = useState(null);
   const [gdbReadAt, setGdbReadAt] = useState('');
@@ -407,10 +418,9 @@ function History() {
 
       importTransactions(parsed.transactions);
       if (s.newCompanies > 0) {
+        // 업체목록.xls와 연동 중이면 새로 들어온 거래처는 그 파일에 아직 없으므로 저절로 '저장 안 된 변경'이 된다
+        // (store.isCompaniesDirty — 마지막으로 맞춘 목록과 비교).
         setCompanies(mergeCompanies(state.companies, parsed.companies));
-        // 업체목록.xls와 연동 중이면 새로 들어온 거래처를 아직 그 파일에 안 썼다는
-        // 표시를 남긴다. CompanyManager와 같은 규칙 — 연동 중일 때만 dirty로 둔다.
-        if (state.companyExcelFileName) setCompaniesDirty(true);
       }
       setImportNotice(
         `거래명세서 ${s.total.toLocaleString()}건을 가져왔습니다` +
@@ -524,117 +534,151 @@ function History() {
         <h1>저장된 내역 관리</h1>
       </div>
 
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem',
-        padding: '0.75rem', backgroundColor: '#f8fafc', borderRadius: '6px', flexWrap: 'wrap'
-      }}>
-        {/* 엑셀 보기 파일: 앱 화면과 같은 값으로 만든 보기 전용 사본. 엑셀에서 고쳐도 앱에는 반영되지 않는다. */}
-        <div style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+      {/* 위쪽 도구: 늘 쓰는 것은 '엑셀 연결' 하나만 앞에 둔다. 가끔 쓰는 백업 파일·기존 프로그램 데이터·
+          엑셀 한 번 내려받기·연결 해제는 오른쪽 구석의 '백업·가져오기'를 펼쳐서 쓴다(헷갈리지 않게). */}
+      <div className="history-tools">
+        <div className="history-tools__main">
           {excelBackup.state === 'unsupported' && (
-            <span style={{ fontSize: '0.875rem', color: '#64748b' }}>이 브라우저는 파일 자동 저장을 지원하지 않습니다 (Chrome 또는 Edge에서만 가능).</span>
+            <span className="history-tools__hint">이 브라우저는 엑셀 연결을 지원하지 않습니다 (Chrome 또는 Edge에서 여세요). 엑셀 파일은 '백업·가져오기'에서 내려받을 수 있습니다.</span>
+          )}
+          {excelBackup.state === 'checking' && (
+            <span className="history-tools__hint">엑셀 연결 확인 중…</span>
           )}
           {excelBackup.state === 'disconnected' && (
             <>
-              <span style={{ fontSize: '0.875rem', color: '#64748b' }}>엑셀 보기 파일이 연결되어 있지 않습니다.</span>
-              <button className="btn" onClick={() => runExcel(connectExcelBackup)}><Link2 size={16} /> 엑셀 보기 파일 연결</button>
+              <button className="btn btn-primary" onClick={() => runExcel(connectExistingExcel)}>
+                <FileSpreadsheet size={16} /> 엑셀 연결
+              </button>
+              <span className="history-tools__hint">
+                <b>연결된 엑셀 파일 없음</b> · 쓰던 엑셀 파일(백업용으로 쓰던 파일)을 골라 연결하면, 내역을 저장할 때마다 그 파일이 자동으로 최신이 됩니다.
+                처음이면 오른쪽 <b>백업·가져오기 → 새 엑셀 파일 만들어 연결</b>.
+              </span>
             </>
           )}
           {excelBackup.state === 'needs-permission' && (
             <>
-              <span style={{ fontSize: '0.875rem', color: '#b45309' }}>엑셀 보기 파일({excelBackup.fileName})에 쓰려면 권한이 필요합니다.</span>
-              <button className="btn" onClick={() => runExcel(reconnectExcelBackup)}><Link2 size={16} /> 다시 연결</button>
+              <button className="btn btn-warning" data-file-reconnect onClick={() => runExcel(reconnectExcelBackup)}>
+                <RefreshCw size={16} /> 엑셀 연결 다시 켜기
+              </button>
+              <span className="history-tools__hint history-tools__hint--warn">
+                <b>{excelBackup.fileName}</b> 연결은 그대로인데, 크롬이 파일 쓰기 허락을 거뒀습니다(크롬을 다시 켜거나 오래 쓰지 않으면 이렇게 됩니다).
+                단추를 누르고 크롬 창에서 <b>'모든 방문에서 허용'</b>을 고르면 다음부터는 계속 연결됩니다.
+              </span>
             </>
           )}
           {excelBackup.state === 'connected' && (
             <>
-              <span style={{ fontSize: '0.875rem', color: '#16a34a', fontWeight: 500 }}>
-                엑셀 보기 파일: {excelBackup.fileName} (바뀔 때마다 자동 갱신{excelBackup.busy ? ' · 만드는 중…' : excelBackup.savedAt ? ` · 마지막 ${excelBackup.savedAt}` : ''})
+              <button className="btn btn-connected" onClick={() => runExcel(writeExcelNow)}
+                title="누르면 지금 바로 엑셀 파일에 저장합니다">
+                <CheckCircle2 size={16} /> 엑셀 연결됨
+              </button>
+              <span className="excel-link-file" title="이 파일에 저장된 내역이 자동으로 저장됩니다">
+                <FileSpreadsheet size={15} /> {excelBackup.fileName}
               </span>
-              <button className="btn" onClick={() => runExcel(disconnectExcelBackup)}><Unlink size={16} /> 해제</button>
+              <span className="history-tools__hint">
+                저장할 때마다 자동 갱신{excelBackup.busy ? ' · 저장하는 중…' : excelBackup.savedAt ? ` · 마지막 저장 ${excelBackup.savedAt}` : ''}
+              </span>
             </>
           )}
-          <button className="btn" onClick={handleExportExcel} title="목록·품목·합친 원본·거래처·공급자 시트로 된 엑셀 파일을 내려받습니다 (보기 전용)">
-            <FileSpreadsheet size={16} /> 엑셀로 내보내기
-          </button>
-          {(excelError || excelBackup.error) && (
-            <span style={{ fontSize: '0.875rem', color: 'red', width: '100%' }}>{excelError || excelBackup.error}</span>
-          )}
+
+          <details className="history-tools__more" ref={toolsMoreRef}>
+            <summary><Settings size={15} /> 백업·가져오기</summary>
+            <div className="history-tools__panel">
+              <div className="history-tools__section">
+                <h4>백업 파일</h4>
+                <p>저장된 내역·거래처·공급자를 그대로 담은 파일입니다. 다른 PC로 옮기거나 되살릴 때 씁니다.</p>
+                <div className="history-tools__row">
+                  <button className="btn" onClick={() => runJson(async () => downloadBackup())}>
+                    <Download size={16} /> 백업 파일 만들기
+                  </button>
+                  <button className="btn" onClick={() => restoreInputRef.current?.click()}>
+                    <Upload size={16} /> 백업 파일 불러오기
+                  </button>
+                  <input ref={restoreInputRef} type="file" accept="application/json,.json" onChange={handleRestoreFile} style={{ display: 'none' }} />
+                </div>
+                {/* 예전에 '자동 백업 파일'을 연결해 둔 경우만 보인다(새로 연결하는 단추는 두지 않는다). */}
+                {(jsonBackup.state === 'connected' || jsonBackup.state === 'needs-permission') && (
+                  <div className="history-tools__row">
+                    <span className="history-tools__hint">
+                      자동 백업 파일: <b>{jsonBackup.fileName}</b>
+                      {jsonBackup.state === 'connected'
+                        ? (jsonBackup.savedAt ? ` · 마지막 ${jsonBackup.savedAt}` : '')
+                        : ' · 쓰기 허락이 꺼져 있음'}
+                    </span>
+                    {jsonBackup.state === 'needs-permission' && (
+                      <button className="btn" onClick={() => runJson(reconnectJsonBackup)}><RefreshCw size={14} /> 다시 켜기</button>
+                    )}
+                    <button className="btn" onClick={() => runJson(disconnectJsonBackup)}><Unlink size={14} /> 해제</button>
+                  </div>
+                )}
+              </div>
+
+              <div className="history-tools__section">
+                <h4>기존 프로그램 데이터 (Tradetax.gdb)</h4>
+                <p>예전 거래명세서(제목 포함)를 가져옵니다. 이미 있는 것은 기존 프로그램 내용으로 다시 덮어쓰고, 앱에서 쓴 명세서는 그대로 둡니다.</p>
+                <div className="history-tools__row">
+                  {isGdbLinkSupported() && (gdbLink ? (
+                    <>
+                      <button className="btn" onClick={() => rereadGdb()}>
+                        <RefreshCw size={16} /> 다시 읽기
+                      </button>
+                      <span className="history-tools__hint">
+                        연결된 파일: <b>{gdbLink.name}</b>{gdbReadAt && ` · ${gdbReadAt}에 읽음`}
+                      </span>
+                      <button className="btn" onClick={connectGdb}><Link2 size={14} /> 다른 파일</button>
+                      <button className="btn" onClick={disconnectGdb}><Unlink size={14} /> 연결 해제</button>
+                    </>
+                  ) : (
+                    <button className="btn" onClick={connectGdb}
+                      title="한 번 골라 연결해 두면 다음부터는 '다시 읽기'로 바로 가져옵니다">
+                      <Link2 size={16} /> 파일 연결해서 가져오기
+                    </button>
+                  ))}
+                  <button className="btn" onClick={() => importInputRef.current?.click()}
+                    title="연결하지 않고 파일을 한 번 골라 가져옵니다 (.gdb 또는 예전에 만든 .json)">
+                    <DatabaseBackup size={16} /> 한 번만 가져오기
+                  </button>
+                  <input
+                    ref={importInputRef}
+                    type="file"
+                    accept=".gdb,.GDB,application/json,.json"
+                    onChange={handleImportFile}
+                    style={{ display: 'none' }}
+                  />
+                </div>
+              </div>
+
+              <div className="history-tools__section">
+                <h4>엑셀</h4>
+                <div className="history-tools__row">
+                  <button className="btn" onClick={handleExportExcel} title="연결과 상관없이 지금 내용을 엑셀 파일로 한 번 내려받습니다 (보기 전용)">
+                    <FileSpreadsheet size={16} /> 엑셀 파일로 한 번 내려받기
+                  </button>
+                  {excelBackup.state !== 'unsupported' && (
+                    <>
+                      <button className="btn" onClick={() => runExcel(connectExistingExcel)}
+                        title="이미 있는 엑셀 파일을 골라 연결합니다 (앱이 만든 파일이 아니면 먼저 묻습니다)">
+                        <Link2 size={14} /> {excelBackup.state === 'disconnected' ? '쓰던 엑셀 파일 연결' : '다른 엑셀 파일로 연결'}
+                      </button>
+                      <button className="btn" onClick={() => runExcel(connectExcelBackup)}
+                        title="저장할 곳과 이름을 정해 새 엑셀 파일을 만들고 연결합니다">
+                        <FileSpreadsheet size={14} /> 새 엑셀 파일 만들어 연결
+                      </button>
+                    </>
+                  )}
+                  {excelBackup.state !== 'unsupported' && excelBackup.state !== 'disconnected' && excelBackup.state !== 'checking' && (
+                    <button className="btn" onClick={() => runExcel(disconnectExcelBackup)}><Unlink size={14} /> 엑셀 연결 해제</button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </details>
         </div>
 
-        {/* JSON 백업: 앱 데이터를 그대로 담는 1차 사본. 다른 PC·브라우저에서도 그대로 복원된다. */}
-        <div style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-          {jsonBackup.state === 'disconnected' && (
-            <>
-              <span style={{ fontSize: '0.875rem', color: '#b45309' }}>JSON 백업 파일이 연결되어 있지 않습니다 (내역은 이 브라우저에만 있음).</span>
-              <button className="btn" onClick={() => runJson(connectJsonBackup)}><Link2 size={16} /> JSON 백업 연결</button>
-            </>
-          )}
-          {jsonBackup.state === 'needs-permission' && (
-            <>
-              <span style={{ fontSize: '0.875rem', color: '#b45309' }}>JSON 백업({jsonBackup.fileName})에 쓰려면 권한이 필요합니다.</span>
-              <button className="btn" onClick={() => runJson(reconnectJsonBackup)}><Link2 size={16} /> 다시 연결</button>
-            </>
-          )}
-          {jsonBackup.state === 'connected' && (
-            <>
-              <span style={{ fontSize: '0.875rem', color: '#16a34a', fontWeight: 500 }}>
-                JSON 백업됨: {jsonBackup.fileName} (바뀔 때마다 자동 저장{jsonBackup.savedAt ? ` · 마지막 ${jsonBackup.savedAt}` : ''})
-              </span>
-              <button className="btn" onClick={() => runJson(disconnectJsonBackup)}><Unlink size={16} /> 해제</button>
-            </>
-          )}
-          <button className="btn" onClick={() => runJson(async () => downloadBackup())} title="지금 상태를 .json 파일로 내려받습니다">
-            <Download size={16} /> JSON 내려받기
-          </button>
-          <button className="btn" onClick={() => restoreInputRef.current?.click()} title="JSON 백업 파일에서 내역·거래처·공급자를 되살립니다">
-            <Upload size={16} /> JSON에서 복원
-          </button>
-          <input ref={restoreInputRef} type="file" accept="application/json,.json" onChange={handleRestoreFile} style={{ display: 'none' }} />
-          {(jsonError || jsonBackup.error) && (
-            <span style={{ fontSize: '0.875rem', color: 'red', width: '100%' }}>{jsonError || jsonBackup.error}</span>
-          )}
-        </div>
-
-        <div style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-          {isGdbLinkSupported() && (gdbLink ? (
-            <>
-              <button className="btn btn-primary" onClick={() => rereadGdb()}
-                title="연결해 둔 기존 프로그램 데이터 파일을 지금 내용으로 다시 읽어 가져옵니다 (먼저 건수를 보여 줍니다)">
-                <RefreshCw size={16} /> 기존 프로그램 데이터 다시 읽기
-              </button>
-              <span style={{ fontSize: '0.8125rem', color: '#334155' }}>
-                연결된 파일: <b>{gdbLink.name}</b>{gdbReadAt && ` · ${gdbReadAt}에 읽음`}
-              </span>
-              <button className="btn" onClick={connectGdb} title="다른 .gdb 파일을 골라 연결합니다">
-                <Link2 size={16} /> 다른 파일 연결
-              </button>
-              <button className="btn" onClick={disconnectGdb} title="연결만 끊습니다. 가져온 내역은 그대로 남습니다">
-                <Unlink size={16} /> 연결 해제
-              </button>
-            </>
-          ) : (
-            <button className="btn" onClick={connectGdb}
-              title="기존 프로그램의 데이터 파일(Tradetax.gdb)을 한 번 골라 연결해 두면, 다음부터는 '다시 읽기' 단추로 바로 가져옵니다">
-              <Link2 size={16} /> 기존 프로그램 데이터 파일 연결
-            </button>
-          ))}
-          <button className="btn" onClick={() => importInputRef.current?.click()}
-            title="연결하지 않고 파일을 한 번 골라 가져옵니다 (.gdb 또는 예전에 만든 .json)">
-            <DatabaseBackup size={16} /> {isGdbLinkSupported() ? '파일 골라 한 번만 가져오기' : '기존 프로그램 데이터 가져오기'}
-          </button>
-          <span style={{ fontSize: '0.8125rem', color: '#64748b', width: '100%' }}>
-            기존 프로그램의 데이터 파일 <b>Tradetax.gdb</b>에서 예전 거래명세서(제목 포함)를 가져옵니다. 이미 있는 것은 기존 프로그램 내용으로 다시 덮어쓰고, 앱에서 쓴 명세서는 그대로 둡니다.
-          </span>
-          <input
-            ref={importInputRef}
-            type="file"
-            accept=".gdb,.GDB,application/json,.json"
-            onChange={handleImportFile}
-            style={{ display: 'none' }}
-          />
-        </div>
-        {importError && <span style={{ fontSize: '0.875rem', color: 'red', width: '100%' }}>{importError}</span>}
-        {importNotice && <span style={{ fontSize: '0.875rem', color: '#16a34a', width: '100%' }}>{importNotice}</span>}
+        {(excelError || excelBackup.error) && <span className="history-tools__msg history-tools__msg--error">{excelError || excelBackup.error}</span>}
+        {(jsonError || jsonBackup.error) && <span className="history-tools__msg history-tools__msg--error">{jsonError || jsonBackup.error}</span>}
+        {importError && <span className="history-tools__msg history-tools__msg--error">{importError}</span>}
+        {importNotice && <span className="history-tools__msg history-tools__msg--ok">{importNotice}</span>}
       </div>
 
       {/* 세로로 긴 화면을 기준으로 목록 -> 편집 순으로 쌓는다. 목록은 접을 수 있어서

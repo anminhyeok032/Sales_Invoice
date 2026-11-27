@@ -10,6 +10,11 @@ async function saveCompanyHandle(handle) {
   return saveHandle(HANDLE_KEY, handle);
 }
 
+// 브라우저 저장소나 크롬이 답을 하지 않으면(다른 창이 저장소를 잡고 있는 등) 끝없이 기다리지 않게 시간을 둔다.
+export function withTimeout(promise, ms, message) {
+  return Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error(message)), ms))]);
+}
+
 export async function loadCompanyHandle() {
   return loadHandle(HANDLE_KEY);
 }
@@ -52,7 +57,7 @@ const COMPANY_FIELD_DEFS = [
   { key: 'phone', aliases: ['전화', '전화번호', '연락처'], fallbackIndex: 8 },
 ];
 
-function parseWorkbookToCompanies(arrayBuffer) {
+export function parseWorkbookToCompanies(arrayBuffer) {
   const wb = XLSX.read(arrayBuffer, { type: 'array' });
   const sheet = wb.Sheets[wb.SheetNames[0]];
   const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 });
